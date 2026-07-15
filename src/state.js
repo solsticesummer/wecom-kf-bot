@@ -12,6 +12,7 @@ import path from 'node:path';
 
 const MAX_SEEN = 5000; // bound the dedupe set so the file can't grow forever
 const MAX_HISTORY_TURNS = 10; // user+assistant pairs kept per conversation
+const MAX_HISTORY_USERS = 500; // evict least-recently-active users beyond this
 
 export class StateStore {
   constructor(dataDir) {
@@ -66,8 +67,14 @@ export class StateStore {
     const h = this.getHistory(userId).slice();
     h.push({ role: 'user', content: userText });
     h.push({ role: 'assistant', content: assistantText });
-    // keep the last N turns (2 messages per turn)
+    // Deleting + re-inserting moves this user to the end of the object's key
+    // order, so key order doubles as an LRU list for eviction below.
+    delete this.state.history[userId];
     this.state.history[userId] = h.slice(-MAX_HISTORY_TURNS * 2);
+    const users = Object.keys(this.state.history);
+    for (const stale of users.slice(0, Math.max(0, users.length - MAX_HISTORY_USERS))) {
+      delete this.state.history[stale];
+    }
     this._save();
   }
 }

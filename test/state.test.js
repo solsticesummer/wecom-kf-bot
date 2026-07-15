@@ -33,6 +33,19 @@ test('history is trimmed to the configured window', () => {
   assert.equal(h[h.length - 1].content, 'a29');
 });
 
+test('least-recently-active users are evicted beyond the cap', () => {
+  const dir = tmpDir();
+  const s = new StateStore(dir);
+  for (let i = 0; i < 510; i++) s.appendHistory(`user${i}`, 'hi', 'hello');
+  assert.equal(Object.keys(s.state.history).length, 500);
+  assert.equal(s.getHistory('user0').length, 0); // oldest evicted
+  assert.equal(s.getHistory('user509').length, 2); // newest kept
+  // re-activity moves a user to the safe end
+  s.appendHistory('user10', 'again', 'sure');
+  s.appendHistory('user600', 'new', 'hi');
+  assert.ok(s.getHistory('user10').length > 0);
+});
+
 test('corrupt state file falls back to fresh state', () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, 'state.json'), '{not json');

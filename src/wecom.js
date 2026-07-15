@@ -8,6 +8,19 @@
 
 const BASE = 'https://qyapi.weixin.qq.com/cgi-bin';
 
+// WeCom rejects text messages over 2048 BYTES (not chars — Chinese is 3
+// bytes/char in UTF-8). Trim on a character boundary so we never split a
+// multi-byte sequence and never get the whole send rejected.
+export function truncateUtf8(str, maxBytes) {
+  if (Buffer.byteLength(str, 'utf8') <= maxBytes) return str;
+  const ellipsisBytes = Buffer.byteLength('…', 'utf8'); // 3, not 1!
+  let out = str;
+  while (Buffer.byteLength(out, 'utf8') > maxBytes - ellipsisBytes) {
+    out = out.slice(0, -1);
+  }
+  return out + '…';
+}
+
 export class WecomClient {
   constructor(corpId, secret) {
     this.corpId = corpId;
@@ -72,7 +85,7 @@ export class WecomClient {
       touser: externalUserId,
       open_kfid: openKfId,
       msgtype: 'text',
-      text: { content },
+      text: { content: truncateUtf8(content, 2000) },
     });
   }
 }
