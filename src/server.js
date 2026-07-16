@@ -2,13 +2,13 @@
 //
 // The load-bearing pattern here is ACK-THEN-PROCESS: WeCom expects a response
 // within ~5 seconds and will retry (duplicate!) the callback if we're slow.
-// A Claude call can take longer than that, so the POST handler decrypts,
+// An AI call can take longer than that, so the POST handler decrypts,
 // responds 200 immediately, and does sync → dedupe → AI → reply afterwards.
 
 import express from 'express';
 import { XMLParser } from 'fast-xml-parser';
 import { WecomCrypto } from './crypto.js';
-import { WecomClient } from './wecom.js';
+import { WecomClient, ServiceState } from './wecom.js';
 import { StateStore } from './state.js';
 import { generateReply } from './ai.js';
 
@@ -17,18 +17,21 @@ const {
   KF_SECRET,
   WECOM_TOKEN,
   WECOM_AES_KEY,
-  ANTHROPIC_API_KEY,
-  WELCOME_MSG,
+  DASHSCOPE_API_KEY,
+  ADMIN_TOKEN,
   DATA_DIR = './data',
   PORT = 3000,
 } = process.env;
+
+const WELCOME_MSG =
+  process.env.WELCOME_MSG || '您好！我是智能客服助手，很高兴为您服务，请问有什么可以帮您？';
 
 for (const [name, val] of Object.entries({
   CORP_ID,
   KF_SECRET,
   WECOM_TOKEN,
   WECOM_AES_KEY,
-  ANTHROPIC_API_KEY,
+  DASHSCOPE_API_KEY,
 })) {
   if (!val) {
     console.error(`Missing required env var ${name} — see .env.example`);
@@ -52,6 +55,15 @@ const app = express();
 app.use(express.text({ type: '*/*' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+// Staff-facing bug list. Requires ADMIN_TOKEN to be configured AND supplied —
+// bug reports contain customer messages, so this must never be public.
+app.get('/bugs', (req, res) => {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  res.json(store.getBugs());
+});
 
 // Step 1: URL verification handshake (fires when you click save in the console)
 app.get('/wecom/callback', (req, res) => {
@@ -114,6 +126,18 @@ async function processMessages(syncToken) {
   store.setCursor(cursor);
 }
 
+// Move the session into the human queue (待接入池). Best-effort: if it fails
+// (e.g. no 接待人员 configured on the kf account yet), the customer has
+// already been told a human will follow up — log loudly and move on.
+async function transferToHuman(openKfId, externalUserId) {
+  try {
+    await wecom.transServiceState(openKfId, externalUserId, ServiceState.QUEUED_FOR_HUMAN);
+    console.log(`[handoff] ${externalUserId} → human queue`);
+  } catch (err) {
+    console.error(`handoff failed for ${externalUserId}: ${err.message} — check that 接待人员 are configured`);
+  }
+}
+
 async function handleOneMessage(msg) {
   if (store.hasSeen(msg.msgid)) return;
 
@@ -126,7 +150,7 @@ async function handleOneMessage(msg) {
   // Greet users who just opened the chat (event arrives via the same sync)
   if (msg.msgtype === 'event' && msg.event?.event_type === 'enter_session') {
     store.markSeen(msg.msgid);
-    if (WELCOME_MSG && msg.event.external_userid) {
+    if (msg.event.external_userid) {
       await wecom.sendText(msg.event.open_kfid, msg.event.external_userid, WELCOME_MSG);
     }
     return;
@@ -143,20 +167,61 @@ async function handleOneMessage(msg) {
     return;
   }
 
+  // Who owns this conversation right now? Once it's queued for (or being
+  // handled by) a human, the bot must stay silent — replying here would talk
+  // over your staff. Fail open to BOT: a state-check hiccup shouldn't leave
+  // the customer unanswered.
+  let serviceState = ServiceState.BOT;
+  try {
+    serviceState = await wecom.getServiceState(msg.open_kfid, msg.external_userid);
+  } catch (err) {
+    console.error(`service_state check failed for ${msg.external_userid}:`, err.message);
+  }
+  if (serviceState === ServiceState.QUEUED_FOR_HUMAN || serviceState === ServiceState.HUMAN) {
+    store.markSeen(msg.msgid);
+    return;
+  }
+  if (serviceState === ServiceState.NEW || serviceState === ServiceState.ENDED) {
+    // Claim the session for the bot so the console shows it as 智能助手接待
+    try {
+      await wecom.transServiceState(msg.open_kfid, msg.external_userid, ServiceState.BOT);
+    } catch (err) {
+      console.error(`claim session failed for ${msg.external_userid}:`, err.message);
+    }
+  }
+
   console.log(`[msg] ${msg.external_userid}: ${userText}`);
-  const reply = await generateReply(store.getHistory(msg.external_userid), userText);
+  const { action, reply, bugSummary } = await generateReply(
+    store.getHistory(msg.external_userid),
+    userText
+  );
+
+  // Send the reply BEFORE the state transfer: once the session moves to the
+  // human queue the bot may no longer be allowed to message the customer.
   await wecom.sendText(msg.open_kfid, msg.external_userid, reply);
   // markSeen AFTER the send: a crash in between can cause one duplicate reply,
   // but marking first would turn a crash into a customer never getting answered.
   store.markSeen(msg.msgid);
   store.appendHistory(msg.external_userid, userText, reply);
-  console.log(`[reply] ${msg.external_userid}: ${reply.slice(0, 80)}`);
+  console.log(`[reply:${action}] ${msg.external_userid}: ${reply.slice(0, 80)}`);
+
+  if (action === 'bug') {
+    const bug = store.addBug({
+      userId: msg.external_userid,
+      message: userText,
+      summary: bugSummary || userText.slice(0, 100),
+    });
+    console.log(`[bug #${bug.id}] ${bug.summary}`);
+  }
+  if (action === 'bug' || action === 'handoff') {
+    await transferToHuman(msg.open_kfid, msg.external_userid);
+  }
 }
 
 const server = app.listen(PORT, () => console.log(`wecom-kf-bot listening on :${PORT}`));
 
-// Railway sends SIGTERM on redeploy: stop taking new callbacks, let the
-// in-flight reply queue drain (bounded), then exit.
+// The platform sends SIGTERM on redeploy/restart: stop taking new callbacks,
+// let the in-flight reply queue drain (bounded), then exit.
 process.on('SIGTERM', async () => {
   console.log('SIGTERM — draining queue');
   server.close();

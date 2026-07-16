@@ -1,60 +1,115 @@
-// Claude integration: turns a customer question (+ conversation history)
-// into a reply grounded in knowledge/faq.md.
+// Qwen (Aliyun DashScope) integration: turns a customer question (+ history)
+// into a structured decision grounded in knowledge/faq.md.
 //
-// Cost note: the system prompt (instructions + full FAQ) is identical on
-// every request, so it carries a cache_control breakpoint — after the first
-// message in any 5-minute window, the FAQ bills at ~10% of the input price.
-// Only the short per-user history and the new question bill at full price.
+// One call does two jobs — answering AND triage — by asking the model for a
+// JSON object: { action: "answer" | "handoff" | "bug", reply, bug_summary }.
+// A separate "did the bot fail?" classification call would double cost and
+// latency for no accuracy gain.
+//
+// Efficiency notes:
+// - enable_thinking:false turns off Qwen3's reasoning mode (a thinking trace
+//   would cost tokens and seconds per message; FAQ lookup doesn't need it).
+// - DashScope applies implicit context caching to the repeated system prompt
+//   automatically — no cache_control markup needed (unlike the Claude API).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Anthropic from '@anthropic-ai/sdk';
 
-const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-8';
-const FALLBACK_REPLY =
-  '抱歉，我暂时无法回答这个问题，稍后会有工作人员跟进。/ Sorry, I could not answer right now — a team member will follow up shortly.';
+const MODEL = process.env.QWEN_MODEL || 'qwen3.7-plus';
+const API_URL =
+  process.env.QWEN_API_URL ||
+  'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+
+const HANDOFF_REPLY = '抱歉，我暂时无法处理您的问题，正在为您转接人工客服，请稍候。';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const faqPath = path.join(__dirname, '..', 'knowledge', 'faq.md');
 const faq = fs.existsSync(faqPath) ? fs.readFileSync(faqPath, 'utf8') : '';
 
-const SYSTEM = [
-  {
-    type: 'text',
-    text: `You are the customer-service assistant for this business, replying inside WeChat (微信客服).
+const SYSTEM = `你是本企业在微信客服里的智能客服助手，根据下方知识库回答客户的简单问题。
 
-Rules:
-- Answer ONLY from the knowledge base below. If the answer is not in it, say you don't know and that a human team member will follow up — never invent details about prices, policies, or availability.
-- Reply in the language the customer used (usually Chinese).
-- Keep replies short and chat-friendly: plain text, no markdown, no headings, under ~150 words.
-- Be warm and professional.
+回复规则：
+- 只根据知识库回答。知识库里没有的价格、政策、库存等信息，绝对不能编造。
+- 一律使用简体中文回复。
+- 回复要简短、口语化、适合聊天窗口：纯文本，不用 markdown，不用标题，150 字以内。
+- 态度亲切、专业。
 
-# Knowledge base
-${faq}`,
-    cache_control: { type: 'ephemeral' },
-  },
-];
+输出格式：每次只输出一个 JSON 对象（不要任何其他文字），字段如下：
+- "action"：三选一
+  - "answer"：知识库能回答这个问题
+  - "handoff"：需要转人工——包括：看不懂客户在说什么、知识库回答不了、客户主动要求人工、客户情绪激动、涉及退款或投诉纠纷
+  - "bug"：客户在报告产品故障、bug、异常或使用问题
+- "reply"：发给客户的话。action 为 "handoff" 或 "bug" 时，reply 要告诉客户正在为TA转接人工客服。
+- "bug_summary"：仅当 action 为 "bug" 时填写，用一句话概括客户报告的问题。
 
-const client = new Anthropic(); // reads ANTHROPIC_API_KEY from env
+# 知识库
+${faq}`;
 
-export async function generateReply(history, userText) {
+// Exported for tests. The model is told to output bare JSON, but LLMs
+// sometimes wrap it in ```json fences or prepend a phrase — recover the
+// object rather than failing the whole reply.
+export function parseModelJson(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
   try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      system: SYSTEM,
-      messages: [...history, { role: 'user', content: userText }],
-    });
-    if (response.stop_reason === 'refusal') return FALLBACK_REPLY;
-    const text = response.content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim();
-    return text || FALLBACK_REPLY;
-  } catch (err) {
-    console.error('Claude API error:', err.message);
-    return FALLBACK_REPLY;
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
   }
+}
+
+// Returns { action: 'answer'|'handoff'|'bug', reply, bugSummary }.
+// Never throws — API/parse failures degrade to a handoff so the customer is
+// picked up by a human instead of being left on read.
+export async function generateReply(history, userText) {
+  let raw;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 512,
+        temperature: 0.3,
+        response_format: { type: 'json_object' },
+        enable_thinking: false,
+        messages: [
+          { role: 'system', content: SYSTEM },
+          ...history,
+          { role: 'user', content: userText },
+        ],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(`${res.status} ${data?.error?.message || data?.message || ''}`);
+    }
+    raw = data.choices?.[0]?.message?.content ?? '';
+  } catch (err) {
+    console.error('Qwen API error:', err.message);
+    return { action: 'handoff', reply: HANDOFF_REPLY, bugSummary: '' };
+  }
+
+  const parsed = parseModelJson(raw);
+  if (!parsed || typeof parsed.reply !== 'string' || !parsed.reply.trim()) {
+    // Model ignored the format. If it at least produced text, send that as a
+    // plain answer; a truly empty response becomes a handoff.
+    const fallbackText = raw.trim();
+    return fallbackText
+      ? { action: 'answer', reply: fallbackText, bugSummary: '' }
+      : { action: 'handoff', reply: HANDOFF_REPLY, bugSummary: '' };
+  }
+
+  const action = ['answer', 'handoff', 'bug'].includes(parsed.action) ? parsed.action : 'answer';
+  return {
+    action,
+    reply: parsed.reply.trim(),
+    bugSummary: typeof parsed.bug_summary === 'string' ? parsed.bug_summary.trim() : '',
+  };
 }

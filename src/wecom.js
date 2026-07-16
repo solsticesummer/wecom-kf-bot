@@ -88,4 +88,33 @@ export class WecomClient {
       text: { content: truncateUtf8(content, 2000) },
     });
   }
+
+  // WeCom 微信客服 session states — who currently "owns" the conversation:
+  //   0 new/untreated  1 bot (智能助手)  2 waiting for a human (待接入池)
+  //   3 human serving  4 ended
+  // The bot must only speak in states 0/1; replying during 2/3 would talk
+  // over (or race with) your human staff.
+  async getServiceState(openKfId, externalUserId) {
+    const data = await this._post('/kf/service_state/get', {
+      open_kfid: openKfId,
+      external_userid: externalUserId,
+    });
+    return data.service_state;
+  }
+
+  async transServiceState(openKfId, externalUserId, state) {
+    return this._post('/kf/service_state/trans', {
+      open_kfid: openKfId,
+      external_userid: externalUserId,
+      service_state: state,
+    });
+  }
 }
+
+export const ServiceState = {
+  NEW: 0,
+  BOT: 1,
+  QUEUED_FOR_HUMAN: 2,
+  HUMAN: 3,
+  ENDED: 4,
+};

@@ -63,6 +63,33 @@ export class StateStore {
     return this.state.history[userId] || [];
   }
 
+  // Bug reports live in the same persisted state so they survive restarts,
+  // but are also mirrored to data/bugs.json — a standalone, human-readable
+  // file your team can open/download without wading through cursors and
+  // dedupe ids.
+  addBug({ userId, message, summary }) {
+    if (!this.state.bugs) this.state.bugs = [];
+    const bug = {
+      id: this.state.bugs.length + 1,
+      time: new Date().toISOString(),
+      userId,
+      message,
+      summary,
+      status: 'open',
+    };
+    this.state.bugs.push(bug);
+    this._save();
+    const bugsFile = path.join(path.dirname(this.file), 'bugs.json');
+    const tmp = bugsFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(this.state.bugs, null, 2));
+    fs.renameSync(tmp, bugsFile);
+    return bug;
+  }
+
+  getBugs() {
+    return this.state.bugs || [];
+  }
+
   appendHistory(userId, userText, assistantText) {
     const h = this.getHistory(userId).slice();
     h.push({ role: 'user', content: userText });
