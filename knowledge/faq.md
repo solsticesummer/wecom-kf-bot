@@ -1,30 +1,39 @@
-# Knowledge base (edit me!)
+# DramaClaw 客服知识库
 
-Replace everything below with your real business information. The bot will
-ONLY answer from what's written in this file — the more complete it is, the
-more questions it can handle. After editing, redeploy (git push) to apply.
+## 关于产品
 
-## About us
+- 产品名称：DramaClaw
+- 产品简介：（TODO：一段话介绍产品是做什么的）
+- 产品使用手册：（TODO：手册链接或获取方式），内有详细的功能介绍
 
-- Business name: (your business)
-- What we do: (one paragraph)
-- Hours: (e.g. Mon–Fri 9:00–18:00 CST)
-- Location / website: (…)
+## 新用户 / 测试账号
 
-## Products & pricing
+- 新用户可以申请测试账号，测试账号带有赠送积分（数量有限）。
+- 建议新用户使用几百字的剧本片段来测试功能。
+- 欢迎用户对产品提意见。
 
-- (Product A): (what it is, price, how to buy)
-- (Product B): (…)
+## 充值
 
-## Common questions
+- 问「怎么充值」的标准回答：这是我们目前开放给新手小伙伴的充值优惠，有一定制作经验的，推荐选择 99 元以上的档位更划算哟。
+- C 端个人创作者充值阶梯（限时赠送活动进行中）：
 
-### How do I get a refund?
-(your policy)
+| 档位 | 充值金额 | 基础积分 | 赠送积分 | 适合人群 | 限时赠送 | 到账积分 |
+|------|---------|---------|---------|---------|---------|---------|
+| 新手体验包 | ¥29 | 435 | 0 | 首次体验 | 200 | 635 |
+| 创作入门包 | ¥59 | 885 | 0 | 轻度体验 | 400 | 1,285 |
+| 日常创作包 | ¥99 | 1,485 | 30 | 个人创作者常用 | 700 | 2,215 |
+| 进阶创作包 | ¥199 | 2,985 | 90 | 短视频/漫剧尝试 | 1,400 | 4,475 |
+| 高频创作包 | ¥499 | 7,485 | 315 | 稳定创作用户 | 3,500 | 11,300 |
+| 专业创作者包 | ¥999 | 14,985 | 1,015 | 高频个人创作者 | 7,000 | 23,000 |
 
-### How long does shipping take?
-(your answer)
+- 到账积分 = 基础积分 + 赠送积分 + 限时赠送。
+- 用户问「充值有没有更多优惠」时：先回复「您这边有哪些具体需求呢？我这边也好申请更多优惠」，这属于需要转人工跟进的情况。
 
-## Escalation
+## 商务合作
 
-If the customer is angry, asks for a human, or has a billing dispute, the bot
-should say a team member will follow up and not attempt to resolve it itself.
+- 用户提到「合作」时：回复「请稍等，我这边联系商务与您具体联系，方便告知您的联系方式以及贵公司名称吗？」，转人工由商务跟进。
+
+## 语气参考
+
+亲切活泼，可以用「哟」「哦」「～」等语气词。示例：
+「赠送积分有限 建议使用几百字的剧本片段测试功能哦，产品使用手册也有详细的功能介绍，欢迎向我们提意见～」

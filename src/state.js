@@ -63,6 +63,27 @@ export class StateStore {
     return this.state.history[userId] || [];
   }
 
+  // "Pending tip" flags: set when a customer requests a test account, cleared
+  // once the post-distribution credits tip has been sent. Persisted so a
+  // restart between the human distributing the account and the tip going out
+  // doesn't lose the follow-up.
+  hasPendingTip(userId) {
+    return Boolean(this.state.pendingTips?.[userId]);
+  }
+
+  setPendingTip(userId) {
+    if (!this.state.pendingTips) this.state.pendingTips = {};
+    this.state.pendingTips[userId] = Date.now();
+    this._save();
+  }
+
+  clearPendingTip(userId) {
+    if (this.state.pendingTips?.[userId]) {
+      delete this.state.pendingTips[userId];
+      this._save();
+    }
+  }
+
   // Bug reports live in the same persisted state so they survive restarts,
   // but are also mirrored to data/bugs.json — a standalone, human-readable
   // file your team can open/download without wading through cursors and

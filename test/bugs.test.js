@@ -23,6 +23,20 @@ test('bugs persist across restarts and get sequential ids', () => {
   assert.equal(b.getBugs()[0].summary, '支付按钮无响应');
 });
 
+test('pending account tips persist across restarts and clear once', () => {
+  const dir = tmpDir();
+  const a = new StateStore(dir);
+  assert.equal(a.hasPendingTip('u1'), false);
+  a.setPendingTip('u1');
+  assert.equal(a.hasPendingTip('u1'), true);
+
+  const b = new StateStore(dir); // simulated restart
+  assert.equal(b.hasPendingTip('u1'), true);
+  b.clearPendingTip('u1');
+  assert.equal(b.hasPendingTip('u1'), false);
+  b.clearPendingTip('u1'); // clearing twice is harmless
+});
+
 test('bugs are mirrored to a readable bugs.json', () => {
   const dir = tmpDir();
   const store = new StateStore(dir);

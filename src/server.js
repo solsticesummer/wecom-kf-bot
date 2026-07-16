@@ -23,8 +23,12 @@ const {
   PORT = 3000,
 } = process.env;
 
-const WELCOME_MSG =
-  process.env.WELCOME_MSG || '您好！我是智能客服助手，很高兴为您服务，请问有什么可以帮您？';
+const WELCOME_MSG = process.env.WELCOME_MSG || '您好！感谢您对DramaClaw的关注～';
+
+// Sent automatically after a staff member distributes a test account
+// (detected via the staff member's own message in the session).
+const CREDITS_TIP =
+  '赠送积分有限 建议使用几百字的剧本片段测试功能哦，产品使用手册也有详细的功能介绍，欢迎向我们提意见～';
 
 for (const [name, val] of Object.entries({
   CORP_ID,
@@ -156,6 +160,22 @@ async function handleOneMessage(msg) {
     return;
   }
 
+  // origin 5 = sent by a human staff member (接待人员). If this customer was
+  // waiting for a test account, the staff message IS the distribution —
+  // follow up with the credits tip. Send may be rejected while the human
+  // still owns the session; keep the flag so a later event retries.
+  if (msg.origin === 5 && msg.external_userid && store.hasPendingTip(msg.external_userid)) {
+    store.markSeen(msg.msgid);
+    try {
+      await wecom.sendText(msg.open_kfid, msg.external_userid, CREDITS_TIP);
+      store.clearPendingTip(msg.external_userid);
+      console.log(`[tip] sent credits tip to ${msg.external_userid}`);
+    } catch (err) {
+      console.error(`credits tip send failed for ${msg.external_userid} (will retry on next event):`, err.message);
+    }
+    return;
+  }
+
   // origin 3 = sent by the customer; skip our own/system messages
   if (msg.origin !== 3 || msg.msgtype !== 'text') {
     store.markSeen(msg.msgid);
@@ -213,7 +233,12 @@ async function handleOneMessage(msg) {
     });
     console.log(`[bug #${bug.id}] ${bug.summary}`);
   }
-  if (action === 'bug' || action === 'handoff') {
+  if (action === 'account') {
+    // Human staff distribute the account; when their message appears in the
+    // sync stream (origin 5) the bot follows up with the credits tip.
+    store.setPendingTip(msg.external_userid);
+  }
+  if (action === 'bug' || action === 'handoff' || action === 'account') {
     await transferToHuman(msg.open_kfid, msg.external_userid);
   }
 }
