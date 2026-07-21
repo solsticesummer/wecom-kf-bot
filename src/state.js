@@ -111,6 +111,31 @@ export class StateStore {
     return this.state.bugs || [];
   }
 
+  // Coverage-gap log: every question the bot couldn't answer (handed off).
+  // Same shape/persistence as bugs — mirrored to data/unanswered.json so the
+  // team can review real misses and grow knowledge/faq.md from them.
+  addUnanswered({ userId, message, reply }) {
+    if (!this.state.unanswered) this.state.unanswered = [];
+    const entry = {
+      id: this.state.unanswered.length + 1,
+      time: new Date().toISOString(),
+      userId,
+      message,
+      reply,
+    };
+    this.state.unanswered.push(entry);
+    this._save();
+    const file = path.join(path.dirname(this.file), 'unanswered.json');
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(this.state.unanswered, null, 2));
+    fs.renameSync(tmp, file);
+    return entry;
+  }
+
+  getUnanswered() {
+    return this.state.unanswered || [];
+  }
+
   appendHistory(userId, userText, assistantText) {
     const h = this.getHistory(userId).slice();
     h.push({ role: 'user', content: userText });

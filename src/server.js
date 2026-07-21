@@ -69,6 +69,15 @@ app.get('/bugs', (req, res) => {
   res.json(store.getBugs());
 });
 
+// Staff-facing coverage-gap list: questions the bot couldn't answer. Same
+// ADMIN_TOKEN gate as /bugs — the entries contain customer messages.
+app.get('/unanswered', (req, res) => {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  res.json(store.getUnanswered());
+});
+
 // Step 1: URL verification handshake (fires when you click save in the console)
 app.get('/wecom/callback', (req, res) => {
   const { msg_signature, timestamp, nonce, echostr } = req.query;
@@ -232,6 +241,17 @@ async function handleOneMessage(msg) {
       summary: bugSummary || userText.slice(0, 100),
     });
     console.log(`[bug #${bug.id}] ${bug.summary}`);
+  }
+  if (action === 'handoff') {
+    // Coverage-gap log: the bot couldn't answer from the FAQ (or the API
+    // failed). Note this also captures by-design handoffs (商务合作 / 充值优惠 /
+    // 情绪激动); keeping the reply lets staff tell real gaps from those.
+    const entry = store.addUnanswered({
+      userId: msg.external_userid,
+      message: userText,
+      reply,
+    });
+    console.log(`[unanswered #${entry.id}] ${userText.slice(0, 80)}`);
   }
   if (action === 'account') {
     // Human staff distribute the account; when their message appears in the

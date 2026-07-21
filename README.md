@@ -56,6 +56,21 @@ GET /bugs?token=<ADMIN_TOKEN>
 
 (Set `ADMIN_TOKEN` in the env; the endpoint is disabled when unset.)
 
+## Coverage gaps
+
+Every time the bot can't answer and hands off, it records
+`{ id, time, userId, message, reply }` to `data/unanswered.json`. Review this
+list to see which real customer questions are missing from `knowledge/faq.md`,
+then add them — the FAQ grows from actual misses instead of guesswork.
+
+```
+GET /unanswered?token=<ADMIN_TOKEN>
+```
+
+(Same `ADMIN_TOKEN` gate as `/bugs`; entries contain customer messages, so it's
+never public. Note: this also captures by-design handoffs like 商务合作 /
+充值优惠 — each entry keeps the bot's reply so you can tell real gaps apart.)
+
 ## Setup
 
 1. `npm install`
