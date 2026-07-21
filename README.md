@@ -58,18 +58,31 @@ GET /bugs?token=<ADMIN_TOKEN>
 
 ## Coverage gaps
 
-Every time the bot can't answer and hands off, it records
-`{ id, time, userId, message, reply }` to `data/unanswered.json`. Review this
-list to see which real customer questions are missing from `knowledge/faq.md`,
-then add them — the FAQ grows from actual misses instead of guesswork.
+Every time the bot hands off, it records
+`{ id, time, userId, message, reply, reason }` to `data/unanswered.json`.
+Review this list to see which real customer questions are missing from
+`knowledge/faq.md`, then add them — the FAQ grows from actual misses instead of
+guesswork.
+
+`reason` tells genuine gaps apart from by-design handoffs:
+
+| reason | meaning | genuine FAQ gap? |
+|--------|---------|------------------|
+| `not_in_kb` | 知识库答不上来 | ✅ **yes** |
+| `unclear` | 看不懂客户想问什么 | ✅ yes |
+| `user_request` | 客户主动要求人工 | no |
+| `upset` | 情绪激动 / 退款 / 投诉 | no |
+| `business` | 商务合作 | no |
+| `discount` | 想谈充值优惠 | no |
+| `api_error` | API/解析失败的兜底转人工（非内容问题） | no |
 
 ```
-GET /unanswered?token=<ADMIN_TOKEN>
+GET /unanswered?token=<ADMIN_TOKEN>                 # everything
+GET /unanswered?token=<ADMIN_TOKEN>&reason=not_in_kb # just the real FAQ gaps
 ```
 
 (Same `ADMIN_TOKEN` gate as `/bugs`; entries contain customer messages, so it's
-never public. Note: this also captures by-design handoffs like 商务合作 /
-充值优惠 — each entry keeps the bot's reply so you can tell real gaps apart.)
+never public.)
 
 ## Setup
 

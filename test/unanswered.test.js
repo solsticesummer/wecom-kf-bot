@@ -22,6 +22,16 @@ test('unanswered entries persist across restarts and get sequential ids', () => 
   assert.equal(b.getUnanswered()[0].message, '你们在哪个城市？');
 });
 
+test('unanswered entries store the handoff reason for filtering', () => {
+  const dir = tmpDir();
+  const store = new StateStore(dir);
+  store.addUnanswered({ userId: 'u1', message: '你们在哪个城市？', reply: '转人工', reason: 'not_in_kb' });
+  store.addUnanswered({ userId: 'u2', message: '我想谈合作', reply: '转商务', reason: 'business' });
+  const gaps = store.getUnanswered().filter((e) => e.reason === 'not_in_kb');
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].message, '你们在哪个城市？');
+});
+
 test('unanswered entries are mirrored to a readable unanswered.json', () => {
   const dir = tmpDir();
   const store = new StateStore(dir);

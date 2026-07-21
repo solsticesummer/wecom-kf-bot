@@ -75,7 +75,10 @@ app.get('/unanswered', (req, res) => {
   if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
     return res.status(403).json({ error: 'forbidden' });
   }
-  res.json(store.getUnanswered());
+  // ?reason=not_in_kb narrows to one handoff reason (e.g. the genuine FAQ gaps);
+  // no reason param returns everything.
+  const list = store.getUnanswered();
+  res.json(req.query.reason ? list.filter((e) => e.reason === req.query.reason) : list);
 });
 
 // Step 1: URL verification handshake (fires when you click save in the console)
@@ -220,7 +223,7 @@ async function handleOneMessage(msg) {
   }
 
   console.log(`[msg] ${msg.external_userid}: ${userText}`);
-  const { action, reply, bugSummary } = await generateReply(
+  const { action, reply, bugSummary, handoffReason } = await generateReply(
     store.getHistory(msg.external_userid),
     userText
   );
@@ -250,8 +253,9 @@ async function handleOneMessage(msg) {
       userId: msg.external_userid,
       message: userText,
       reply,
+      reason: handoffReason,
     });
-    console.log(`[unanswered #${entry.id}] ${userText.slice(0, 80)}`);
+    console.log(`[unanswered #${entry.id}] (${handoffReason}) ${userText.slice(0, 80)}`);
   }
   if (action === 'account') {
     // Human staff distribute the account; when their message appears in the

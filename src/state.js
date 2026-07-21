@@ -114,7 +114,7 @@ export class StateStore {
   // Coverage-gap log: every question the bot couldn't answer (handed off).
   // Same shape/persistence as bugs — mirrored to data/unanswered.json so the
   // team can review real misses and grow knowledge/faq.md from them.
-  addUnanswered({ userId, message, reply }) {
+  addUnanswered({ userId, message, reply, reason }) {
     if (!this.state.unanswered) this.state.unanswered = [];
     const entry = {
       id: this.state.unanswered.length + 1,
@@ -122,6 +122,7 @@ export class StateStore {
       userId,
       message,
       reply,
+      reason,
     };
     this.state.unanswered.push(entry);
     this._save();
