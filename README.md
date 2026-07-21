@@ -98,6 +98,20 @@ Returns `{ "2026-07-21": { calls, promptTokens, completionTokens, totalTokens },
 (`ADMIN_TOKEN`-gated for consistency. Rough rule of thumb: ~1M free tokens ≈
 250–300 conversations, since the FAQ rides in the prompt on every message.)
 
+## Rate limiting
+
+Each **customer** (`external_userid`) is capped at **15 messages per 60s** by
+default; over that, the bot drops the message *before* any Qwen or WeCom call
+and sends one gentle "slow down" notice per window. This protects your token
+spend / WeCom quota from a single spammer. Tune via `RATE_LIMIT_MAX`,
+`RATE_LIMIT_WINDOW_SECONDS`, `RATE_LIMIT_MSG`.
+
+The limit is **per customer, not per IP** — every request arrives through
+WeCom's servers, so an IP limit would throttle WeCom itself, not the abuser.
+State is in-memory (a restart just resets the windows). Note: limits are
+per-process, so they'd multiply if you ran multiple instances — the single-
+instance pm2 deploy below is fine.
+
 ## Setup
 
 1. `npm install`
