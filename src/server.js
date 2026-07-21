@@ -81,6 +81,15 @@ app.get('/unanswered', (req, res) => {
   res.json(req.query.reason ? list.filter((e) => e.reason === req.query.reason) : list);
 });
 
+// Staff-facing per-day token usage, to watch free-quota / cost burn.
+// Not customer data, but gated the same way for consistency.
+app.get('/usage', (req, res) => {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  res.json(store.getUsage());
+});
+
 // Step 1: URL verification handshake (fires when you click save in the console)
 app.get('/wecom/callback', (req, res) => {
   const { msg_signature, timestamp, nonce, echostr } = req.query;
@@ -223,10 +232,11 @@ async function handleOneMessage(msg) {
   }
 
   console.log(`[msg] ${msg.external_userid}: ${userText}`);
-  const { action, reply, bugSummary, handoffReason } = await generateReply(
+  const { action, reply, bugSummary, handoffReason, usage } = await generateReply(
     store.getHistory(msg.external_userid),
     userText
   );
+  if (usage) store.addUsage(usage); // track token spend per day
 
   // Send the reply BEFORE the state transfer: once the session moves to the
   // human queue the bot may no longer be allowed to message the customer.

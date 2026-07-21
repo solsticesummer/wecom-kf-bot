@@ -81,6 +81,7 @@ export function parseModelJson(text) {
 // picked up by a human instead of being left on read.
 export async function generateReply(history, userText) {
   let raw;
+  let usage; // token counts from the API, threaded out so callers can log cost
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
@@ -107,6 +108,14 @@ export async function generateReply(history, userText) {
       throw new Error(`${res.status} ${data?.error?.message || data?.message || ''}`);
     }
     raw = data.choices?.[0]?.message?.content ?? '';
+    // Normalize the API's snake_case usage to our camelCase house style.
+    if (data.usage) {
+      usage = {
+        promptTokens: data.usage.prompt_tokens ?? 0,
+        completionTokens: data.usage.completion_tokens ?? 0,
+        totalTokens: data.usage.total_tokens ?? 0,
+      };
+    }
   } catch (err) {
     console.error('Qwen API error:', err.message);
     return { action: 'handoff', reply: HANDOFF_REPLY, bugSummary: '', handoffReason: 'api_error' };
@@ -118,8 +127,8 @@ export async function generateReply(history, userText) {
     // plain answer; a truly empty response becomes a handoff.
     const fallbackText = raw.trim();
     return fallbackText
-      ? { action: 'answer', reply: fallbackText, bugSummary: '', handoffReason: '' }
-      : { action: 'handoff', reply: HANDOFF_REPLY, bugSummary: '', handoffReason: 'api_error' };
+      ? { action: 'answer', reply: fallbackText, bugSummary: '', handoffReason: '', usage }
+      : { action: 'handoff', reply: HANDOFF_REPLY, bugSummary: '', handoffReason: 'api_error', usage };
   }
 
   const action = ['answer', 'account', 'handoff', 'bug'].includes(parsed.action)
@@ -136,5 +145,6 @@ export async function generateReply(history, userText) {
     reply: parsed.reply.trim(),
     bugSummary: typeof parsed.bug_summary === 'string' ? parsed.bug_summary.trim() : '',
     handoffReason,
+    usage,
   };
 }

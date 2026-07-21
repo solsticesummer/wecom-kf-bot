@@ -137,6 +137,30 @@ export class StateStore {
     return this.state.unanswered || [];
   }
 
+  // Per-day token tally so you can watch free-quota burn without the console.
+  // Keyed by UTC date (YYYY-MM-DD); small enough to keep indefinitely.
+  addUsage({ promptTokens = 0, completionTokens = 0, totalTokens = 0 } = {}) {
+    if (!this.state.usage) this.state.usage = {};
+    const day = new Date().toISOString().slice(0, 10);
+    const d = this.state.usage[day] || {
+      calls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    };
+    d.calls += 1;
+    d.promptTokens += promptTokens;
+    d.completionTokens += completionTokens;
+    d.totalTokens += totalTokens;
+    this.state.usage[day] = d;
+    this._save();
+    return d;
+  }
+
+  getUsage() {
+    return this.state.usage || {};
+  }
+
   appendHistory(userId, userText, assistantText) {
     const h = this.getHistory(userId).slice();
     h.push({ role: 'user', content: userText });

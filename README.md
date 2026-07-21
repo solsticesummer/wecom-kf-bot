@@ -84,6 +84,20 @@ GET /unanswered?token=<ADMIN_TOKEN>&reason=not_in_kb # just the real FAQ gaps
 (Same `ADMIN_TOKEN` gate as `/bugs`; entries contain customer messages, so it's
 never public.)
 
+## Token usage
+
+Every model reply's token count (from the API's `usage`) is tallied per UTC day
+in `data/state.json`. Use it to watch your 百炼 free-quota / cost burn without
+opening the Aliyun console:
+
+```
+GET /usage?token=<ADMIN_TOKEN>
+```
+
+Returns `{ "2026-07-21": { calls, promptTokens, completionTokens, totalTokens }, … }`.
+(`ADMIN_TOKEN`-gated for consistency. Rough rule of thumb: ~1M free tokens ≈
+250–300 conversations, since the FAQ rides in the prompt on every message.)
+
 ## Setup
 
 1. `npm install`
