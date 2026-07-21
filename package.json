@@ -6,6 +6,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "demo": "node --env-file=.env scripts/demo-web.js",
     "test": "node --test"
   },
   "engines": {

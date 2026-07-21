@@ -77,6 +77,44 @@ export function parseModelJson(text) {
   }
 }
 
+// Transient failures worth retrying: rate limits (429) and server errors (5xx),
+// plus network errors/timeouts (thrown by fetch, handled below). A 401/400 is
+// permanent — retrying just wastes time and quota, so those fail fast.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 2; // 3 attempts total
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// POST to Qwen with exponential backoff on transient failures. Returns the
+// parsed JSON body, or throws after exhausting retries.
+async function callModel(body) {
+  let lastErr;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    let res;
+    try {
+      res = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+        },
+        body,
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      lastErr = err; // network error / timeout — retryable
+      if (attempt === MAX_RETRIES) throw lastErr;
+      await sleep(400 * 2 ** attempt + Math.random() * 200);
+      continue;
+    }
+    const data = await res.json();
+    if (res.ok) return data;
+    lastErr = new Error(`${res.status} ${data?.error?.message || data?.message || ''}`);
+    if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_RETRIES) throw lastErr;
+    await sleep(400 * 2 ** attempt + Math.random() * 200);
+  }
+  throw lastErr; // unreachable, but keeps the type honest
+}
+
 // Returns { action: 'answer'|'handoff'|'bug', reply, bugSummary }.
 // Never throws — API/parse failures degrade to a handoff so the customer is
 // picked up by a human instead of being left on read.
@@ -84,13 +122,8 @@ export async function generateReply(history, userText) {
   let raw;
   let usage; // token counts from the API, threaded out so callers can log cost
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}`,
-      },
-      body: JSON.stringify({
+    const data = await callModel(
+      JSON.stringify({
         model: MODEL,
         max_tokens: 512,
         temperature: 0.3,
@@ -101,13 +134,8 @@ export async function generateReply(history, userText) {
           ...history,
           { role: 'user', content: userText },
         ],
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(`${res.status} ${data?.error?.message || data?.message || ''}`);
-    }
+      })
+    );
     raw = data.choices?.[0]?.message?.content ?? '';
     // Normalize the API's snake_case usage to our camelCase house style.
     if (data.usage) {
