@@ -177,4 +177,7 @@ Edit `knowledge/faq.md`, then `git pull` on the server and
 - Model defaults to `qwen3.7-plus`; verify the exact model id available in
   your 百炼 套餐 (模型广场) and override with the `QWEN_MODEL` env var if it
   differs. Thinking mode is disabled for latency/cost.
+- Reply tone/creativity is tunable via `QWEN_TEMPERATURE` (default `0.6`): lower
+  is more repetitive/safe, higher is more varied/original. Facts stay grounded in
+  the FAQ regardless (enforced by the prompt).
 - `data/bugs.json` is plain JSON — safe to download or open directly.
