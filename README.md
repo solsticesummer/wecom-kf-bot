@@ -1,10 +1,12 @@
 # wecom-kf-bot
 
 AI auto-reply bot for a WeCom (企业微信) 微信客服 account. Customers message
-your kf account in WeChat; the bot answers in Chinese with Qwen (Aliyun 百炼 /
-DashScope), grounded strictly in `knowledge/faq.md`. When it can't help, it
-hands the conversation to a human; when a customer reports a product bug, it
-logs the report and hands off too.
+your kf account in WeChat; the bot answers with Qwen (Aliyun 百炼 / DashScope),
+grounded strictly in `knowledge/faq.md`. It matches on intent/keywords (not
+exact wording), replies in the customer's own language (Chinese by default),
+and politely declines off-topic/general questions instead of escalating them.
+When it can't help with a product question it hands the conversation to a
+human; when a customer reports a product bug, it logs the report and hands off too.
 
 ## How it works
 
