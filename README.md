@@ -8,6 +8,9 @@ and politely declines off-topic/general questions instead of escalating them.
 When it can't help with a product question it hands the conversation to a
 human; when a customer reports a product bug, it logs the report and hands off too.
 
+> **New here?** Follow [`SETUP.md`](./SETUP.md) for a step-by-step first deploy. This
+> README is the terse, by-topic reference.
+
 ## How it works
 
 ```
@@ -45,6 +48,13 @@ customer is still told a human will follow up).
 
 While a session is queued or human-owned the bot stays silent — it re-checks
 `service_state` before every reply.
+
+**"转人工客服" button.** After every normal answer the bot re-offers an inline menu with
+a 转人工客服 option (WeCom 微信客服 has no persistent bottom-of-screen button, so the menu
+is re-sent each turn to stay within reach). A tap comes back with a stable `menu_id`, so
+the bot skips the AI entirely, moves the session to 待接入池, and logs it under
+`user_request` — same destination as any other handoff, so it still needs a 接待人员.
+Customize the copy via `HUMAN_MENU_HEAD` / `HUMAN_MENU_ITEM` / `HUMAN_HANDOFF_REPLY`.
 
 ## Bug reports
 
