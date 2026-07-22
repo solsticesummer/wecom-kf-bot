@@ -89,6 +89,22 @@ export class WecomClient {
     });
   }
 
+  // Send a menu message (菜单消息): a set of tappable rows shown inline in the
+  // chat. We use it for the "转人工客服" option. `list` items are WeCom's raw
+  // shape, e.g. { type: 'click', click: { id, content } }; head/tail are
+  // optional plain-text lines above/below the options.
+  async sendMenu(openKfId, externalUserId, { headContent = '', list = [], tailContent = '' }) {
+    const msgmenu = { list };
+    if (headContent) msgmenu.head_content = headContent;
+    if (tailContent) msgmenu.tail_content = tailContent;
+    return this._post('/kf/send_msg', {
+      touser: externalUserId,
+      open_kfid: openKfId,
+      msgtype: 'msgmenu',
+      msgmenu,
+    });
+  }
+
   // WeCom 微信客服 session states — who currently "owns" the conversation:
   //   0 new/untreated  1 bot (智能助手)  2 waiting for a human (待接入池)
   //   3 human serving  4 ended

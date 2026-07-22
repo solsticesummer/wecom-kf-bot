@@ -26,6 +26,17 @@ const {
 
 const WELCOME_MSG = process.env.WELCOME_MSG || '您好！感谢您对DramaClaw的关注～';
 
+// "转人工客服" menu. WeCom 微信客服 has no persistent bottom-of-screen button,
+// so we re-offer this inline menu after each bot answer — always one tap away
+// the moment a reply doesn't satisfy the customer. When tapped, WeCom echoes a
+// text message carrying text.menu_id === HUMAN_HANDOFF_ID, which we act on
+// directly (no AI call, no intent-guessing).
+const HUMAN_HANDOFF_ID = 'human_service'; // must match on send and on the tap
+const HUMAN_MENU_HEAD = process.env.HUMAN_MENU_HEAD || '没有解决您的问题？';
+const HUMAN_MENU_ITEM = process.env.HUMAN_MENU_ITEM || '转人工客服';
+const HUMAN_HANDOFF_REPLY =
+  process.env.HUMAN_HANDOFF_REPLY || '好的，正在为您转接人工客服，请稍候。';
+
 // Sent automatically after a staff member distributes a test account
 // (detected via the staff member's own message in the session).
 const CREDITS_TIP =
@@ -263,6 +274,27 @@ async function handleOneMessage(msg) {
     }
   }
 
+  // Explicit "转人工客服" tap. WeCom delivers it as a text message whose
+  // text.menu_id equals the id we set on the menu item, so we branch on that
+  // structured signal instead of running the AI or matching keywords. Placed
+  // after the service-state check on purpose: if a human already owns the
+  // session, the block above already returned, so a stray tap can't re-confirm.
+  if (msg.text?.menu_id === HUMAN_HANDOFF_ID) {
+    // Send the confirmation BEFORE the transfer — once the session moves to the
+    // human queue the bot may no longer be allowed to message the customer.
+    await wecom.sendText(msg.open_kfid, msg.external_userid, HUMAN_HANDOFF_REPLY);
+    store.markSeen(msg.msgid);
+    store.addUnanswered({
+      userId: msg.external_userid,
+      message: userText,
+      reply: HUMAN_HANDOFF_REPLY,
+      reason: 'user_request',
+    });
+    console.log(`[handoff:button] ${msg.external_userid}`);
+    await transferToHuman(msg.open_kfid, msg.external_userid);
+    return;
+  }
+
   console.log(`[msg] ${msg.external_userid}: ${userText}`);
   const { action, reply, bugSummary, handoffReason, usage } = await generateReply(
     store.getHistory(msg.external_userid),
@@ -278,6 +310,21 @@ async function handleOneMessage(msg) {
   store.markSeen(msg.msgid);
   store.appendHistory(msg.external_userid, userText, reply);
   console.log(`[reply:${action}] ${msg.external_userid}: ${reply.slice(0, 80)}`);
+
+  // Re-offer a human after a normal answer, so "转人工客服" is always one tap
+  // away if the bot's reply didn't satisfy. Skipped for handoff/bug/account —
+  // a human is already coming, so the menu would just be noise. Best-effort:
+  // the answer is already sent, so a failed menu send must not throw here.
+  if (action === 'answer') {
+    try {
+      await wecom.sendMenu(msg.open_kfid, msg.external_userid, {
+        headContent: HUMAN_MENU_HEAD,
+        list: [{ type: 'click', click: { id: HUMAN_HANDOFF_ID, content: HUMAN_MENU_ITEM } }],
+      });
+    } catch (err) {
+      console.error(`human menu send failed for ${msg.external_userid}:`, err.message);
+    }
+  }
 
   if (action === 'bug') {
     const bug = store.addBug({
