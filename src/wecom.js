@@ -125,6 +125,14 @@ export class WecomClient {
       service_state: state,
     });
   }
+
+  // List the enterprise's 微信客服 accounts. Used to look up a kf account's
+  // open_kfid (e.g. to fill ALLOWED_KF_IDS) — it isn't shown in the console UI.
+  // Returns the raw account_list: [{ open_kfid, name, avatar, ... }].
+  async listKfAccounts() {
+    const data = await this._post('/kf/account/list', { offset: 0, limit: 100 });
+    return data.account_list || [];
+  }
 }
 
 export const ServiceState = {

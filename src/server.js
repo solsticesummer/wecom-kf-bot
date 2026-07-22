@@ -37,6 +37,17 @@ const HUMAN_MENU_ITEM = process.env.HUMAN_MENU_ITEM || '转人工客服';
 const HUMAN_HANDOFF_REPLY =
   process.env.HUMAN_HANDOFF_REPLY || '好的，正在为您转接人工客服，请稍候。';
 
+// Safety allowlist of kf accounts (open_kfid) the bot is allowed to answer.
+// The 微信客服 callback is enterprise-wide — EVERY kf account's messages arrive
+// at this one endpoint — so without this, enabling the callback would make the
+// bot answer the live 官方客服's real customers. Set ALLOWED_KF_IDS to your
+// TEST account's open_kfid while testing; leave it UNSET in production to
+// answer every kf account. Fail-closed: when set, anything not on the list
+// (including messages we can't attribute to a kf account) is ignored.
+const ALLOWED_KF_IDS = new Set(
+  (process.env.ALLOWED_KF_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)
+);
+
 // Sent automatically after a staff member distributes a test account
 // (detected via the staff member's own message in the session).
 const CREDITS_TIP =
@@ -193,6 +204,15 @@ async function handleOneMessage(msg) {
   const ageSeconds = Date.now() / 1000 - (msg.send_time || 0);
   if (msg.send_time && ageSeconds > MAX_MSG_AGE_SECONDS) {
     store.markSeen(msg.msgid); // too old — swallow silently, don't reply
+    return;
+  }
+
+  // Safety guard: only touch allowed kf accounts (see ALLOWED_KF_IDS). Regular
+  // messages carry open_kfid; enter_session events carry it under .event. When
+  // the allowlist is active, drop anything that doesn't positively match — this
+  // is what keeps a test run from ever answering the live 官方客服.
+  if (ALLOWED_KF_IDS.size && !ALLOWED_KF_IDS.has(msg.open_kfid || msg.event?.open_kfid)) {
+    store.markSeen(msg.msgid);
     return;
   }
 
