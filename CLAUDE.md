@@ -64,5 +64,20 @@ never a customer-visible outage.
   `npm test` 38 pass / 1 DB-gated skip (incl. the byte-identical prompt lock), and a
   live end-to-end call (retrieval + Qwen through `http.ts`) returned a correctly
   grounded answer. Updated README/SETUP deploy commands for the build step.
-  Branch: `refactor/phase1-extract-core`. **Next:** Phase 2 (monorepo workspaces),
-  then the Python knowledge/MCP layer + `namespace` column.
+  Branch: `refactor/phase1-extract-core`. Reviewed after: added `tsconfig.build.json`
+  so the prod build emits only `src/` (not tests/scripts).
+- **2026-07-23 — Phase 2: Python knowledge + MCP layer** (`packages/knowledge/`, same
+  branch). Brought Python forward (the TS bot is untouched — zero prod risk). A
+  runnable **MCP server** + CLI that chunks, embeds (DashScope text-embedding-v4),
+  and hybrid-searches (dense ∪ trigram, RRF-fused) arbitrary project corpora by
+  **`namespace`** — the cross-project "search engine," and the reference schema the
+  bot's `chunks` table will later adopt. Tools: `kb_search` / `kb_ingest` /
+  `kb_list_namespaces` / `kb_delete_namespace`. Runs against a **dedicated**
+  `knowledge_dev` Postgres (never the bot's DB). Verified end-to-end: chunk unit
+  tests pass, MCP lists 4 tools, real ingest (19 chunks) + semantic search returns
+  correct modules. Install note: use `pip install -e . --config-settings
+  editable_mode=compat` (strict editable's `.pth` finder didn't auto-load here).
+  **Deferred:** moving the TS bot into `packages/bot/` (pure bookkeeping — low value
+  until more packages exist). **Next:** rerank pass + PDF/PPTX connectors in Python;
+  add the `namespace` column to the bot's own `chunks` table; then wire the bot to
+  this service (behind the full-FAQ fallback) when it earns the cutover.
