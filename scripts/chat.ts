@@ -1,5 +1,5 @@
 // Dev-only REPL for testing the AI layer without WeCom.
-// Usage: node --env-file=.env scripts/chat.js   (needs DASHSCOPE_API_KEY)
+// Usage: npm run chat   (needs DASHSCOPE_API_KEY)
 //
 // Talks to the real Qwen API through the real generateReply(), with the real
 // FAQ — the only thing simulated is the customer typing in a terminal
@@ -7,15 +7,15 @@
 // (answer / account / handoff / bug) can be verified by eye.
 
 import readline from 'node:readline/promises';
-import { generateReply } from '../src/ai.js';
+import { generateReply, type ChatMessage } from '../src/ai.js';
 
 if (!process.env.DASHSCOPE_API_KEY) {
-  console.error('DASHSCOPE_API_KEY is not set — run with: node --env-file=.env scripts/chat.js');
+  console.error('DASHSCOPE_API_KEY is not set — run with: npm run chat');
   process.exit(1);
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const history = [];
+const history: ChatMessage[] = [];
 
 console.log('DramaClaw 客服 AI 测试 — 输入客户消息，Ctrl+C 退出\n');
 

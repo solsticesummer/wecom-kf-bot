@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    "strict": true,
+    // The codebase has ~20 `catch (err) { …err.message }` sites. Strict mode
+    // would type `err` as `unknown` and break every one. Turning this single
+    // flag off keeps them compiling; tightening to `err instanceof Error` is
+    // tracked tech-debt (see CLAUDE.md), not a behavior change.
+    "useUnknownInCatchVariables": false,
+
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "declaration": false,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["src", "scripts", "test"]
+}

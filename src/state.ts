@@ -14,8 +14,60 @@ const MAX_SEEN = 5000; // bound the dedupe set so the file can't grow forever
 const MAX_HISTORY_TURNS = 10; // user+assistant pairs kept per conversation
 const MAX_HISTORY_USERS = 500; // evict least-recently-active users beyond this
 
+export interface HistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface Bug {
+  id: number;
+  time: string;
+  userId: string;
+  message: string;
+  summary: string;
+  status: string;
+}
+
+export interface Unanswered {
+  id: number;
+  time: string;
+  userId: string;
+  message: string;
+  reply: string;
+  // Optional: the pipeline always sets it, but the mirror/log helpers accept
+  // entries without one (some callers/tests omit it).
+  reason?: string;
+}
+
+export interface UsageDay {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface Usage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+interface State {
+  cursor: string;
+  seen: string[];
+  history: Record<string, HistoryTurn[]>;
+  pendingTips?: Record<string, number>;
+  bugs?: Bug[];
+  unanswered?: Unanswered[];
+  usage?: Record<string, UsageDay>;
+}
+
 export class StateStore {
-  constructor(dataDir) {
+  file: string;
+  state: State;
+  private _seenSet: Set<string>;
+
+  constructor(dataDir: string) {
     this.file = path.join(dataDir, 'state.json');
     fs.mkdirSync(dataDir, { recursive: true });
     this.state = { cursor: '', seen: [], history: {} };
@@ -29,37 +81,38 @@ export class StateStore {
     this._seenSet = new Set(this.state.seen);
   }
 
-  _save() {
+  private _save(): void {
     // write-then-rename so a crash mid-write can't corrupt the file
     const tmp = this.file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.state));
     fs.renameSync(tmp, this.file);
   }
 
-  get cursor() {
+  get cursor(): string {
     return this.state.cursor;
   }
 
-  setCursor(cursor) {
+  setCursor(cursor: string): void {
     this.state.cursor = cursor || '';
     this._save();
   }
 
-  hasSeen(msgid) {
+  hasSeen(msgid: string): boolean {
     return this._seenSet.has(msgid);
   }
 
-  markSeen(msgid) {
+  markSeen(msgid: string): void {
     if (this._seenSet.has(msgid)) return;
     this._seenSet.add(msgid);
     this.state.seen.push(msgid);
     while (this.state.seen.length > MAX_SEEN) {
-      this._seenSet.delete(this.state.seen.shift());
+      const evicted = this.state.seen.shift();
+      if (evicted !== undefined) this._seenSet.delete(evicted);
     }
     this._save();
   }
 
-  getHistory(userId) {
+  getHistory(userId: string): HistoryTurn[] {
     return this.state.history[userId] || [];
   }
 
@@ -67,17 +120,17 @@ export class StateStore {
   // once the post-distribution credits tip has been sent. Persisted so a
   // restart between the human distributing the account and the tip going out
   // doesn't lose the follow-up.
-  hasPendingTip(userId) {
+  hasPendingTip(userId: string): boolean {
     return Boolean(this.state.pendingTips?.[userId]);
   }
 
-  setPendingTip(userId) {
+  setPendingTip(userId: string): void {
     if (!this.state.pendingTips) this.state.pendingTips = {};
     this.state.pendingTips[userId] = Date.now();
     this._save();
   }
 
-  clearPendingTip(userId) {
+  clearPendingTip(userId: string): void {
     if (this.state.pendingTips?.[userId]) {
       delete this.state.pendingTips[userId];
       this._save();
@@ -88,9 +141,9 @@ export class StateStore {
   // but are also mirrored to data/bugs.json — a standalone, human-readable
   // file your team can open/download without wading through cursors and
   // dedupe ids.
-  addBug({ userId, message, summary }) {
+  addBug({ userId, message, summary }: { userId: string; message: string; summary: string }): Bug {
     if (!this.state.bugs) this.state.bugs = [];
-    const bug = {
+    const bug: Bug = {
       id: this.state.bugs.length + 1,
       time: new Date().toISOString(),
       userId,
@@ -107,16 +160,26 @@ export class StateStore {
     return bug;
   }
 
-  getBugs() {
+  getBugs(): Bug[] {
     return this.state.bugs || [];
   }
 
   // Coverage-gap log: every question the bot couldn't answer (handed off).
   // Same shape/persistence as bugs — mirrored to data/unanswered.json so the
   // team can review real misses and grow knowledge/faq.md from them.
-  addUnanswered({ userId, message, reply, reason }) {
+  addUnanswered({
+    userId,
+    message,
+    reply,
+    reason,
+  }: {
+    userId: string;
+    message: string;
+    reply: string;
+    reason?: string;
+  }): Unanswered {
     if (!this.state.unanswered) this.state.unanswered = [];
-    const entry = {
+    const entry: Unanswered = {
       id: this.state.unanswered.length + 1,
       time: new Date().toISOString(),
       userId,
@@ -133,16 +196,16 @@ export class StateStore {
     return entry;
   }
 
-  getUnanswered() {
+  getUnanswered(): Unanswered[] {
     return this.state.unanswered || [];
   }
 
   // Per-day token tally so you can watch free-quota burn without the console.
   // Keyed by UTC date (YYYY-MM-DD); small enough to keep indefinitely.
-  addUsage({ promptTokens = 0, completionTokens = 0, totalTokens = 0 } = {}) {
+  addUsage({ promptTokens = 0, completionTokens = 0, totalTokens = 0 }: Usage = {}): UsageDay {
     if (!this.state.usage) this.state.usage = {};
     const day = new Date().toISOString().slice(0, 10);
-    const d = this.state.usage[day] || {
+    const d: UsageDay = this.state.usage[day] || {
       calls: 0,
       promptTokens: 0,
       completionTokens: 0,
@@ -157,11 +220,11 @@ export class StateStore {
     return d;
   }
 
-  getUsage() {
+  getUsage(): Record<string, UsageDay> {
     return this.state.usage || {};
   }
 
-  appendHistory(userId, userText, assistantText) {
+  appendHistory(userId: string, userText: string, assistantText: string): void {
     const h = this.getHistory(userId).slice();
     h.push({ role: 'user', content: userText });
     h.push({ role: 'assistant', content: assistantText });

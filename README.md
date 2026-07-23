@@ -132,7 +132,9 @@ instance pm2 deploy below is fine.
 3. Edit `knowledge/faq.md` with your real business info — the bot only
    answers from this file.
 4. `npm test` — all tests must pass.
-5. `npm start`
+5. `npm run dev` (runs the TypeScript directly via tsx). For a production-style
+   run, `npm run build && npm start` (compiles `src/` → `dist/`, then runs the
+   compiled JS).
 
 ## Deploy (Aliyun 轻量应用服务器)
 
@@ -141,12 +143,14 @@ instance pm2 deploy below is fine.
    *No ICP-filed domain? Pick the Hong Kong region and you can serve without
    备案.*
 2. In the server's firewall (安全组/防火墙 tab), open ports 80 and 443.
-3. SSH in, clone the repo, `npm install --omit=dev`.
-4. Export the vars from `.env.example`, then run under a process manager so
-   the bot survives reboots — e.g. pm2:
+3. SSH in, clone the repo, `npm install` (the full install — the TypeScript
+   compiler is a devDependency needed for the build), then `npm run build` to
+   emit `dist/`.
+4. Export the vars from `.env.example`, then run the **compiled** entrypoint
+   under a process manager so the bot survives reboots — e.g. pm2:
    ```bash
    npm i -g pm2
-   pm2 start src/server.js --name wecom-kf-bot
+   pm2 start dist/src/server.js --name wecom-kf-bot
    pm2 save && pm2 startup
    ```
 5. Put HTTPS in front. Easiest is Caddy — one config block gets automatic
@@ -159,7 +163,7 @@ instance pm2 deploy below is fine.
    Point your domain's DNS A record at the server IP first.
 6. Your callback URL is `https://your.domain.com/wecom/callback`.
 
-To update: `git pull && npm install --omit=dev && pm2 restart wecom-kf-bot`.
+To update: `git pull && npm install && npm run build && pm2 restart wecom-kf-bot`.
 
 ## Connect WeCom
 

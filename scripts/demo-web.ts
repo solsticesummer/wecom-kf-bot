@@ -2,25 +2,25 @@
 // actually talk to the bot without WeCom. Same generateReply() and FAQ the
 // real server uses; only the transport (a local web page) is different.
 //
-// Run:  node --env-file=.env scripts/demo-web.js   (needs DASHSCOPE_API_KEY)
+// Run:  npm run demo   (needs DASHSCOPE_API_KEY)
 // Then open http://localhost:3000
 //
-// Deliberately separate from src/server.js: this endpoint has no WeCom
+// Deliberately separate from src/server.ts: this endpoint has no WeCom
 // signature check, so it must never be part of the production server.
 
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import { generateReply } from '../src/ai.js';
 
 if (!process.env.DASHSCOPE_API_KEY) {
-  console.error('DASHSCOPE_API_KEY is not set — run: node --env-file=.env scripts/demo-web.js');
+  console.error('DASHSCOPE_API_KEY is not set — run: npm run demo');
   process.exit(1);
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const app = express();
 app.use(express.json());
 
-app.post('/chat', async (req, res) => {
+app.post('/chat', async (req: Request, res: Response) => {
   const { message, history = [] } = req.body || {};
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'message required' });
@@ -34,7 +34,7 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-app.get('/', (_req, res) => res.type('html').send(PAGE));
+app.get('/', (_req: Request, res: Response) => res.type('html').send(PAGE));
 
 app.listen(PORT, () => {
   console.log(`DramaClaw 客服 测试台 → http://localhost:${PORT}`);

@@ -3,20 +3,32 @@
   "version": "1.0.0",
   "description": "AI auto-reply bot for WeCom (企业微信) 微信客服 accounts, powered by Qwen (Aliyun DashScope)",
   "type": "module",
-  "main": "src/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "demo": "node --env-file=.env scripts/demo-web.js",
-    "migrate": "node --env-file=.env scripts/migrate.js",
-    "index": "node --env-file=.env scripts/build-index.js",
-    "test": "node --test"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/src/server.js",
+    "dev": "node --import tsx --env-file=.env src/server.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "demo": "node --import tsx --env-file=.env scripts/demo-web.ts",
+    "chat": "node --import tsx --env-file=.env scripts/chat.ts",
+    "migrate": "node --import tsx --env-file=.env scripts/migrate.ts",
+    "index": "node --import tsx --env-file=.env scripts/build-index.ts",
+    "list-kf": "node --import tsx --env-file=.env scripts/list-kf.ts"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "express": "^4.21.0",
     "fast-xml-parser": "^4.5.0",
     "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   }
 }

@@ -8,10 +8,43 @@
 
 const BASE = 'https://qyapi.weixin.qq.com/cgi-bin';
 
+// The raw WeCom API envelope — every response carries errcode/errmsg plus
+// endpoint-specific fields we read positionally.
+interface WecomResponse {
+  errcode: number;
+  errmsg: string;
+  [key: string]: any;
+}
+
+// A single message from /kf/sync_msg. Only the fields the pipeline reads are
+// typed; WeCom sends more. `event` is present for msgtype === 'event'.
+export interface KfMessage {
+  msgid: string;
+  msgtype?: string;
+  origin?: number;
+  open_kfid?: string;
+  external_userid?: string;
+  send_time?: number;
+  text?: { content?: string; menu_id?: string };
+  event?: { event_type?: string; open_kfid?: string; external_userid?: string };
+}
+
+export interface KfAccount {
+  open_kfid: string;
+  name: string;
+  [key: string]: any;
+}
+
+export interface MenuItem {
+  type: string;
+  click?: { id: string; content: string };
+  [key: string]: any;
+}
+
 // WeCom rejects text messages over 2048 BYTES (not chars — Chinese is 3
 // bytes/char in UTF-8). Trim on a character boundary so we never split a
 // multi-byte sequence and never get the whole send rejected.
-export function truncateUtf8(str, maxBytes) {
+export function truncateUtf8(str: string, maxBytes: number): string {
   if (Buffer.byteLength(str, 'utf8') <= maxBytes) return str;
   const ellipsisBytes = Buffer.byteLength('…', 'utf8'); // 3, not 1!
   let out = str;
@@ -22,36 +55,39 @@ export function truncateUtf8(str, maxBytes) {
 }
 
 export class WecomClient {
-  constructor(corpId, secret) {
+  corpId: string;
+  secret: string;
+  private _token: string | null = null;
+  private _tokenExpiresAt = 0;
+
+  constructor(corpId: string, secret: string) {
     this.corpId = corpId;
     this.secret = secret;
-    this._token = null;
-    this._tokenExpiresAt = 0;
   }
 
-  async getAccessToken() {
+  async getAccessToken(): Promise<string> {
     if (this._token && Date.now() < this._tokenExpiresAt) return this._token;
     const res = await fetch(
-      `${BASE}/gettoken?corpid=${encodeURIComponent(this.corpId)}&corpsecret=${encodeURIComponent(this.secret)}`
+      `${BASE}/gettoken?corpid=${encodeURIComponent(this.corpId)}&corpsecret=${encodeURIComponent(this.secret)}`,
     );
-    const data = await res.json();
+    const data: any = await res.json();
     if (data.errcode !== 0) {
       throw new Error(`gettoken failed: ${data.errcode} ${data.errmsg}`);
     }
-    this._token = data.access_token;
+    this._token = data.access_token as string;
     // refresh 200s early so a token never expires mid-request
     this._tokenExpiresAt = Date.now() + (data.expires_in - 200) * 1000;
     return this._token;
   }
 
-  async _post(path, body) {
+  private async _post(path: string, body: unknown): Promise<WecomResponse> {
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE}${path}?access_token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
+    const data = (await res.json()) as WecomResponse;
     if (data.errcode !== 0) {
       // 40014/42001 = invalid/expired token — drop cache so the next call refreshes
       if (data.errcode === 40014 || data.errcode === 42001) this._token = null;
@@ -63,8 +99,11 @@ export class WecomClient {
   // Pull all pending messages. `syncToken` comes from the decrypted callback
   // event; `cursor` is our persisted position in the message stream.
   // Returns { messages, cursor } with the new cursor to persist.
-  async syncMessages(syncToken, cursor) {
-    const messages = [];
+  async syncMessages(
+    syncToken: string,
+    cursor: string,
+  ): Promise<{ messages: KfMessage[]; cursor: string }> {
+    const messages: KfMessage[] = [];
     let hasMore = true;
     let nextCursor = cursor;
     while (hasMore) {
@@ -73,14 +112,14 @@ export class WecomClient {
         cursor: nextCursor || '',
         limit: 1000,
       });
-      messages.push(...(data.msg_list || []));
+      messages.push(...((data.msg_list as KfMessage[]) || []));
       nextCursor = data.next_cursor;
       hasMore = data.has_more === 1;
     }
     return { messages, cursor: nextCursor };
   }
 
-  async sendText(openKfId, externalUserId, content) {
+  async sendText(openKfId: string, externalUserId: string, content: string): Promise<WecomResponse> {
     return this._post('/kf/send_msg', {
       touser: externalUserId,
       open_kfid: openKfId,
@@ -93,8 +132,16 @@ export class WecomClient {
   // chat. We use it for the "转人工客服" option. `list` items are WeCom's raw
   // shape, e.g. { type: 'click', click: { id, content } }; head/tail are
   // optional plain-text lines above/below the options.
-  async sendMenu(openKfId, externalUserId, { headContent = '', list = [], tailContent = '' }) {
-    const msgmenu = { list };
+  async sendMenu(
+    openKfId: string,
+    externalUserId: string,
+    { headContent = '', list = [], tailContent = '' }: {
+      headContent?: string;
+      list?: MenuItem[];
+      tailContent?: string;
+    },
+  ): Promise<WecomResponse> {
+    const msgmenu: { list: MenuItem[]; head_content?: string; tail_content?: string } = { list };
     if (headContent) msgmenu.head_content = headContent;
     if (tailContent) msgmenu.tail_content = tailContent;
     return this._post('/kf/send_msg', {
@@ -110,15 +157,19 @@ export class WecomClient {
   //   3 human serving  4 ended
   // The bot must only speak in states 0/1; replying during 2/3 would talk
   // over (or race with) your human staff.
-  async getServiceState(openKfId, externalUserId) {
+  async getServiceState(openKfId: string, externalUserId: string): Promise<number> {
     const data = await this._post('/kf/service_state/get', {
       open_kfid: openKfId,
       external_userid: externalUserId,
     });
-    return data.service_state;
+    return data.service_state as number;
   }
 
-  async transServiceState(openKfId, externalUserId, state) {
+  async transServiceState(
+    openKfId: string,
+    externalUserId: string,
+    state: number,
+  ): Promise<WecomResponse> {
     return this._post('/kf/service_state/trans', {
       open_kfid: openKfId,
       external_userid: externalUserId,
@@ -129,9 +180,9 @@ export class WecomClient {
   // List the enterprise's 微信客服 accounts. Used to look up a kf account's
   // open_kfid (e.g. to fill ALLOWED_KF_IDS) — it isn't shown in the console UI.
   // Returns the raw account_list: [{ open_kfid, name, avatar, ... }].
-  async listKfAccounts() {
+  async listKfAccounts(): Promise<KfAccount[]> {
     const data = await this._post('/kf/account/list', { offset: 0, limit: 100 });
-    return data.account_list || [];
+    return (data.account_list as KfAccount[]) || [];
   }
 }
 
@@ -141,4 +192,4 @@ export const ServiceState = {
   QUEUED_FOR_HUMAN: 2,
   HUMAN: 3,
   ENDED: 4,
-};
+} as const;

@@ -79,10 +79,11 @@ SSH into your 轻量应用服务器, then:
 # 1. Open the firewall for web traffic
 #    (Aliyun console → your server → 防火墙/安全组 → allow ports 80 and 443)
 
-# 2. Get the code and install production dependencies only
+# 2. Get the code and install dependencies (the TypeScript compiler is a
+#    devDependency needed to build, so this is the full install, not --omit=dev)
 git clone <your-repo-url> wecom-kf-bot
 cd wecom-kf-bot
-npm install --omit=dev
+npm install
 
 # 3. Create your .env from the template and fill in the five secrets
 cp .env.example .env
@@ -94,10 +95,11 @@ cp .env.example .env
 # 4. Edit knowledge/faq.md with your real product info — the bot ONLY answers
 #    from this file, so an empty FAQ means an unhelpful bot.
 
-# 5. Sanity check, then run under pm2 so it survives reboots
+# 5. Sanity check, build, then run under pm2 so it survives reboots
 npm test                       # all tests must pass
+npm run build                  # compile src/ (TypeScript) → dist/
 npm i -g pm2
-pm2 start src/server.js --name wecom-kf-bot
+pm2 start dist/src/server.js --name wecom-kf-bot
 pm2 save && pm2 startup        # follow the printed command to enable on boot
 ```
 
@@ -120,7 +122,7 @@ https://your.domain.com/wecom/callback
 Quick check it's alive: `curl https://your.domain.com/health` should return
 `{"ok":true}`.
 
-> **Updating later:** `git pull && npm install --omit=dev && pm2 restart wecom-kf-bot`.
+> **Updating later:** `git pull && npm install && npm run build && pm2 restart wecom-kf-bot`.
 > The FAQ is read once at startup, so a `faq.md` change also needs that restart.
 
 ---

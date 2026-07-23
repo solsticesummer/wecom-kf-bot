@@ -12,18 +12,33 @@
 // nothing to stop one abusive customer — whose spam is what actually costs us
 // Qwen API calls.
 
+export interface RateLimiterOptions {
+  maxRequests: number;
+  windowMs: number;
+  maxKeys?: number;
+}
+
+export interface AllowResult {
+  allowed: boolean;
+  notify: boolean;
+}
+
 export class RateLimiter {
-  constructor({ maxRequests, windowMs, maxKeys = 10_000 }) {
+  maxRequests: number;
+  windowMs: number;
+  maxKeys: number;
+  hits = new Map<string, number[]>(); // key -> timestamps (ms) still inside the window
+  notifiedAt = new Map<string, number>(); // key -> last time we told them they're throttled
+
+  constructor({ maxRequests, windowMs, maxKeys = 10_000 }: RateLimiterOptions) {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
     this.maxKeys = maxKeys;
-    this.hits = new Map(); // key -> timestamps (ms) still inside the window
-    this.notifiedAt = new Map(); // key -> last time we told them they're throttled
   }
 
   // Returns { allowed, notify }. Records the hit when allowed. `now` is
   // injectable so the sliding window is testable without real timers.
-  allow(key, now = Date.now()) {
+  allow(key: string, now: number = Date.now()): AllowResult {
     const cutoff = now - this.windowMs;
     const recent = (this.hits.get(key) || []).filter((t) => t > cutoff);
 
@@ -48,9 +63,10 @@ export class RateLimiter {
 
   // Bound memory: customers churn, so drop the least-recently-touched keys
   // once we exceed the cap.
-  _evict() {
+  private _evict(): void {
     while (this.hits.size > this.maxKeys) {
       const oldest = this.hits.keys().next().value;
+      if (oldest === undefined) break;
       this.hits.delete(oldest);
       this.notifiedAt.delete(oldest);
     }

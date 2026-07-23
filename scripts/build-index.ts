@@ -4,6 +4,7 @@
 // Each source is reloaded in its own transaction (DELETE WHERE source=$1; INSERT …), so
 // re-indexing one corpus never disturbs the others.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -11,13 +12,21 @@ import { getPool, closePool } from '../src/db.js';
 import { embed, toVectorLiteral } from '../src/retrieval.js';
 import { chunkFaq, chunkManual } from '../src/chunk.js';
 
+type Pool = ReturnType<typeof getPool>;
+
+interface SourceChunk {
+  source: string;
+  section: string;
+  content: string;
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const SRC_DIR = process.env.KB_SOURCE_DIR || path.join(process.env.HOME, 'Downloads');
+const SRC_DIR = process.env.KB_SOURCE_DIR || path.join(os.homedir(), 'Downloads');
 
-// --- Source → [{ source, section, content }] -------------------------------------------
+// --- Source → SourceChunk[] ------------------------------------------------------------
 
-function faqChunks() {
+function faqChunks(): SourceChunk[] {
   const md = fs.readFileSync(path.join(ROOT, 'knowledge', 'faq.md'), 'utf8');
   return chunkFaq(md).map((content) => ({
     source: 'faq.md',
@@ -26,7 +35,7 @@ function faqChunks() {
   }));
 }
 
-function manualChunks() {
+function manualChunks(): SourceChunk[] {
   const pdf = path.join(SRC_DIR, 'DramaClaw 产品使用手册.pdf');
   if (!fs.existsSync(pdf)) {
     console.warn('manual not found, skipping:', pdf);
@@ -39,7 +48,7 @@ function manualChunks() {
   return chunkManual(text).map((c) => ({ source: 'manual', section: c.section, content: c.content }));
 }
 
-function whitepaperChunks() {
+function whitepaperChunks(): SourceChunk[] {
   const pptx = path.join(SRC_DIR, 'DramaClaw产品白皮书_0624版(1).pptx');
   if (!fs.existsSync(pptx)) {
     console.warn('whitepaper not found, skipping:', pptx);
@@ -49,7 +58,7 @@ function whitepaperChunks() {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
-  return JSON.parse(json)
+  return (JSON.parse(json) as { index: number; title: string; text: string }[])
     .filter((s) => s.text && s.text.trim())
     .map((s) => ({
       source: 'whitepaper',
@@ -60,13 +69,13 @@ function whitepaperChunks() {
 
 // --- Embed + reload one source in a transaction ----------------------------------------
 
-async function reloadSource(pool, source, chunks) {
+async function reloadSource(pool: Pool, source: string, chunks: SourceChunk[]): Promise<void> {
   if (chunks.length === 0) {
     console.log(`${source}: 0 chunks (skipped)`);
     return;
   }
   process.stdout.write(`${source}: embedding ${chunks.length} chunks`);
-  const vectors = [];
+  const vectors: number[][] = [];
   for (const c of chunks) {
     vectors.push(await embed(c.content)); // sequential: stays well under rate limits
     process.stdout.write('.');

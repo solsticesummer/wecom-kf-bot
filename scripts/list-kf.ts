@@ -2,7 +2,7 @@
 // The console doesn't show open_kfid, but you need it to set ALLOWED_KF_IDS
 // (so the bot only answers your TEST account, not the live 官方客服).
 //
-//   node --env-file=.env scripts/list-kf.js
+//   npm run list-kf
 //
 // Needs CORP_ID + KF_SECRET in .env. Read-only: it only lists, sends nothing.
 
@@ -25,5 +25,5 @@ if (accounts.length === 0) {
     console.log(`  ${a.name}`);
     console.log(`    open_kfid: ${a.open_kfid}\n`);
   }
-  console.log('Set ALLOWED_KF_IDS in .env to your TEST account\'s open_kfid.');
+  console.log("Set ALLOWED_KF_IDS in .env to your TEST account's open_kfid.");
 }

@@ -15,7 +15,12 @@ import crypto from 'node:crypto';
 const BLOCK_SIZE = 32; // WeCom uses PKCS#7 padding with a 32-byte block
 
 export class WecomCrypto {
-  constructor(token, encodingAesKey, corpId) {
+  token: string;
+  corpId: string;
+  aesKey: Buffer;
+  iv: Buffer;
+
+  constructor(token: string, encodingAesKey: string, corpId: string) {
     if (!token || !encodingAesKey || !corpId) {
       throw new Error('WecomCrypto requires token, encodingAesKey and corpId');
     }
@@ -29,19 +34,19 @@ export class WecomCrypto {
   }
 
   // Signature = sha1(sort([token, timestamp, nonce, encrypted]).join(''))
-  sign(timestamp, nonce, encrypted) {
+  sign(timestamp: string, nonce: string, encrypted: string): string {
     const raw = [this.token, timestamp, nonce, encrypted].sort().join('');
     return crypto.createHash('sha1').update(raw).digest('hex');
   }
 
-  verifySignature(signature, timestamp, nonce, encrypted) {
+  verifySignature(signature: string, timestamp: string, nonce: string, encrypted: string): boolean {
     const expected = this.sign(timestamp, nonce, encrypted);
     // timingSafeEqual requires equal lengths; a wrong-length sig is invalid anyway
     if (!signature || signature.length !== expected.length) return false;
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   }
 
-  decrypt(encryptedB64) {
+  decrypt(encryptedB64: string): string {
     const decipher = crypto.createDecipheriv('aes-256-cbc', this.aesKey, this.iv);
     decipher.setAutoPadding(false); // WeCom's 32-byte-block PKCS#7 — strip manually
     let plain = Buffer.concat([
@@ -63,7 +68,7 @@ export class WecomCrypto {
     return msg;
   }
 
-  encrypt(msg) {
+  encrypt(msg: string): string {
     const random = crypto.randomBytes(16);
     const msgBuf = Buffer.from(msg, 'utf8');
     const lenBuf = Buffer.alloc(4);
@@ -81,7 +86,7 @@ export class WecomCrypto {
 
   // GET verification handshake: check the signature over echostr, then return
   // the decrypted plaintext — WeCom expects it as the raw response body.
-  verifyUrl(signature, timestamp, nonce, echostr) {
+  verifyUrl(signature: string, timestamp: string, nonce: string, echostr: string): string {
     if (!this.verifySignature(signature, timestamp, nonce, echostr)) {
       throw new Error('URL verification signature mismatch');
     }
