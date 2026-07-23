@@ -1,0 +1,10 @@
+{
+  // Production build config: emit ONLY src/ → dist/ (so tests and dev scripts
+  // never end up in the deployed artifact). The root tsconfig.json still
+  // typechecks src + scripts + test via `npm run typecheck`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "."
+  },
+  "include": ["src"]
+}
