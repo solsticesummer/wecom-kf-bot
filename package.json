@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "demo": "node --env-file=.env scripts/demo-web.js",
+    "migrate": "node --env-file=.env scripts/migrate.js",
+    "index": "node --env-file=.env scripts/build-index.js",
     "test": "node --test"
   },
   "engines": {
@@ -14,6 +16,7 @@
   },
   "dependencies": {
     "express": "^4.21.0",
-    "fast-xml-parser": "^4.5.0"
+    "fast-xml-parser": "^4.5.0",
+    "pg": "^8.22.0"
   }
 }
