@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wecom-knowledge"
+version = "0.1.0"
+description = "Reusable knowledge + MCP layer: chunk, embed, and hybrid-search project corpora across namespaces."
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.2",
+  "psycopg[binary]>=3.1",
+  "httpx>=0.27",
+]
+
+[project.scripts]
+knowledge-mcp = "knowledge.server:main"
+knowledge = "knowledge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["knowledge*"]
