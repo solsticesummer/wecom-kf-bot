@@ -10,3 +10,6 @@ data/
 *.log
 *.bak
 .DS_Store
+
+# Internal session-handoff notes — kept local, not published to the public repo.
+/CLAUDE.md
