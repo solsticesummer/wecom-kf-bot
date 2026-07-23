@@ -124,12 +124,23 @@ State is in-memory (a restart just resets the windows). Note: limits are
 per-process, so they'd multiply if you ran multiple instances — the single-
 instance pm2 deploy below is fine.
 
+## Repository layout
+
+This is an npm-workspaces monorepo:
+
+- `packages/bot/` — this TypeScript WeCom bot (what the rest of this README covers).
+- `packages/knowledge/` — a separate **Python** knowledge + MCP layer (see its own
+  README). Not an npm workspace.
+
+Run the commands below from the **repo root** (the root `package.json` delegates
+`build`/`test`/`start`/`dev` to the bot), or `cd packages/bot` first.
+
 ## Setup
 
 1. `npm install`
 2. Copy `.env.example` values into your environment. Each var's comment says
    where to find it (WeCom admin console / Aliyun 百炼 console).
-3. Edit `knowledge/faq.md` with your real business info — the bot only
+3. Edit `packages/bot/knowledge/faq.md` with your real business info — the bot only
    answers from this file.
 4. `npm test` — all tests must pass.
 5. `npm run dev` (runs the TypeScript directly via tsx). For a production-style
@@ -150,7 +161,7 @@ instance pm2 deploy below is fine.
    under a process manager so the bot survives reboots — e.g. pm2:
    ```bash
    npm i -g pm2
-   pm2 start dist/src/server.js --name wecom-kf-bot
+   cd packages/bot && pm2 start dist/src/server.js --name wecom-kf-bot
    pm2 save && pm2 startup
    ```
 5. Put HTTPS in front. Easiest is Caddy — one config block gets automatic
@@ -182,8 +193,9 @@ Also add 接待人员 to the kf account so human takeover has somewhere to go.
 
 ## Updating the FAQ
 
-Edit `knowledge/faq.md`, then `git pull` on the server and
-`pm2 restart wecom-kf-bot` (the FAQ is read once at startup).
+Edit `packages/bot/knowledge/faq.md`, then on the server `git pull`,
+`npm run build` (the build copies the FAQ into `dist/` for the fallback path),
+and `pm2 restart wecom-kf-bot` (the FAQ is read once at startup).
 
 ## Ops
 

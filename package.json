@@ -1,34 +1,21 @@
 {
-  "name": "wecom-kf-bot",
+  "name": "wecom-kf-bot-monorepo",
+  "private": true,
   "version": "1.0.0",
-  "description": "AI auto-reply bot for WeCom (企业微信) 微信客服 accounts, powered by Qwen (Aliyun DashScope)",
-  "type": "module",
-  "main": "dist/src/server.js",
+  "description": "Monorepo: TypeScript WeCom bot (packages/bot) + Python knowledge/MCP layer (packages/knowledge).",
+  "workspaces": [
+    "packages/bot"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "start": "node dist/src/server.js",
-    "dev": "node --import tsx --env-file=.env src/server.ts",
-    "test": "node --import tsx --test test/*.test.ts",
-    "demo": "node --import tsx --env-file=.env scripts/demo-web.ts",
-    "chat": "node --import tsx --env-file=.env scripts/chat.ts",
-    "migrate": "node --import tsx --env-file=.env scripts/migrate.ts",
-    "index": "node --import tsx --env-file=.env scripts/build-index.ts",
-    "list-kf": "node --import tsx --env-file=.env scripts/list-kf.ts"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "express": "^4.21.0",
-    "fast-xml-parser": "^4.5.0",
-    "pg": "^8.22.0"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.10.0",
-    "@types/pg": "^8.11.10",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "build": "npm run build -w wecom-kf-bot",
+    "typecheck": "npm run typecheck -w wecom-kf-bot",
+    "test": "npm test -w wecom-kf-bot",
+    "start": "npm start -w wecom-kf-bot",
+    "dev": "npm run dev -w wecom-kf-bot",
+    "demo": "npm run demo -w wecom-kf-bot",
+    "chat": "npm run chat -w wecom-kf-bot",
+    "migrate": "npm run migrate -w wecom-kf-bot",
+    "index": "npm run index -w wecom-kf-bot",
+    "list-kf": "npm run list-kf -w wecom-kf-bot"
   }
 }

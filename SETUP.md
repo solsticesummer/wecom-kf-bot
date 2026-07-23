@@ -86,20 +86,21 @@ cd wecom-kf-bot
 npm install
 
 # 3. Create your .env from the template and fill in the five secrets
-cp .env.example .env
-#    edit .env → CORP_ID, KF_SECRET, DASHSCOPE_API_KEY
+cp packages/bot/.env.example packages/bot/.env
+#    edit packages/bot/.env → CORP_ID, KF_SECRET, DASHSCOPE_API_KEY
 #    (leave WECOM_TOKEN / WECOM_AES_KEY for Step 4)
 #    also set ADMIN_TOKEN to a long random string so the /bugs, /unanswered,
 #    /usage dashboards are reachable but not public.
 
-# 4. Edit knowledge/faq.md with your real product info — the bot ONLY answers
-#    from this file, so an empty FAQ means an unhelpful bot.
+# 4. Edit packages/bot/knowledge/faq.md with your real product info — the bot
+#    ONLY answers from this file, so an empty FAQ means an unhelpful bot.
 
 # 5. Sanity check, build, then run under pm2 so it survives reboots
+#    (npm commands run from the repo root; they delegate to packages/bot)
 npm test                       # all tests must pass
-npm run build                  # compile src/ (TypeScript) → dist/
+npm run build                  # compile packages/bot/src → dist/ (+ copy knowledge/)
 npm i -g pm2
-pm2 start dist/src/server.js --name wecom-kf-bot
+cd packages/bot && pm2 start dist/src/server.js --name wecom-kf-bot
 pm2 save && pm2 startup        # follow the printed command to enable on boot
 ```
 

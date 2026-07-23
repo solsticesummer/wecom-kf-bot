@@ -12,9 +12,20 @@ keep the production invariants below working.
 - `strict: true`, with `useUnknownInCatchVariables: false` (the ~20
   `catch (err) { …err.message }` sites; tightening to `err instanceof Error` is
   deferred tech-debt).
-- Build: `npm run build` (tsc → `dist/`); prod runs `node dist/src/server.js`.
-  Dev/tests/scripts run via **tsx** (no compile): `npm run dev`, `npm test`.
+- Build: `npm run build` (tsc → `dist/`, then copies `knowledge/` → `dist/knowledge/`
+  so the compiled FAQ-fallback path resolves). Prod runs `packages/bot/dist/src/server.js`
+  (with cwd = `packages/bot`). Dev/tests/scripts run via **tsx** (no compile).
 - Tests: `node:test` + `node:assert/strict`, run with `node --import tsx --test`.
+
+## Monorepo layout (npm workspaces)
+- Root `package.json` is a private workspace root (`workspaces: ["packages/bot"]`) with
+  convenience scripts that delegate to the bot (`npm run build|test|start|dev|typecheck`).
+- `packages/bot/` — the TypeScript WeCom bot (this file's subject). Self-contained:
+  `src/ scripts/ test/ knowledge/faq.md db/ tsconfig*.json .env`.
+- `packages/knowledge/` — the **Python** knowledge + MCP layer. NOT an npm workspace
+  (Python tooling); that's why `workspaces` names `packages/bot` explicitly, not `*`.
+- Run bot commands from the repo root (they delegate) or `cd packages/bot`. Ops scripts:
+  `npm run migrate|index|list-kf|demo|chat -w wecom-kf-bot`.
 
 ## Architecture direction (decided 2026-07-23)
 Turning this single bot into a reusable **MCP + agent + skill framework**. Full
@@ -30,7 +41,7 @@ plan: `~/.claude/plans/you-are-planning-jolly-stonebraker.md`. Key decisions:
   (full-FAQ fallback stays on the TS side, preserving the "retrieval outage is never
   customer-visible" invariant).
 
-## Source map (`src/`)
+## Source map (`packages/bot/src/`)
 - `server.ts` — Express: WeCom callback (decrypt → ack <5s → process async), the
   message pipeline (dedupe, safety allowlist, rate limit, ownership check, 转人工
   menu, reply, logging), SIGTERM drain.
@@ -81,3 +92,13 @@ never a customer-visible outage.
   until more packages exist). **Next:** rerank pass + PDF/PPTX connectors in Python;
   add the `namespace` column to the bot's own `chunks` table; then wire the bot to
   this service (behind the full-FAQ fallback) when it earns the cutover.
+- **2026-07-23 — monorepo reorg + FAQ-fallback bug fix** (same branch). Moved the TS bot
+  from the repo root into `packages/bot/` (via `git mv`, history preserved) and added the
+  npm-workspace root. **Fixed a latent bug introduced by Phase 1's build-to-`dist`:**
+  `ai.ts` resolves the fallback FAQ as `__dirname/../knowledge/faq.md`, which is
+  `dist/knowledge/faq.md` in compiled prod — a path that didn't exist, so the full-FAQ
+  fallback would have been empty in production (only reachable when retrieval fails; the
+  tsx smoke test ran from `src/` so never hit it). Fix: `build` now copies `knowledge/`
+  into `dist/`. Verified: typecheck clean, 38 tests pass, compiled server loads, and the
+  fallback path resolves to a 19 KB `dist/knowledge/faq.md`. Cleaned build artifacts
+  (`dist/`, `.DS_Store`, `__pycache__`); no dead source existed to delete.
