@@ -17,30 +17,31 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { search } from './retrieval.js';
 import { postJson } from './http.js';
-import { buildSystemRules, DRAMACLAW } from './prompt.js';
+import { activeTenant } from './tenants.js';
 import type { Usage } from './state.js';
 
-const MODEL = process.env.QWEN_MODEL || 'qwen3.7-plus';
 const API_URL =
   process.env.QWEN_API_URL ||
   'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 
-// Sampling temperature: higher = more varied/original wording (less FAQ-parroting),
-// lower = more repetitive/safe. 0.6 is a balanced default; tune via env without a
-// code change. Grounding is enforced by the prompt, not by keeping this low.
-const TEMPERATURE = Number(process.env.QWEN_TEMPERATURE || 0.6);
+// Everything tenant-scoped — the composed system prompt, the action taxonomy, the handoff
+// reasons, the model and its sampling settings — now comes from tenants/<id>.yaml + the
+// skill it names. Loaded once at boot: a malformed skill/tenant pair must fail at startup,
+// not halfway through a customer conversation. The knowledge block is still appended
+// per-request from retrieval (see generateReply), not baked in here.
+const tenant = activeTenant();
+const SYSTEM_RULES = tenant.systemRules;
+const MODEL = tenant.model.name;
+const TEMPERATURE = tenant.model.temperature;
+const MAX_TOKENS = tenant.model.maxTokens;
 
-const HANDOFF_REPLY = '抱歉，我暂时无法处理您的问题，正在为您转接人工客服，请稍候。';
+const HANDOFF_REPLY = tenant.copy.apiErrorReply;
 
-// Why the bot handed off, used to filter the coverage-gap log. The first two
-// are genuine "couldn't answer" gaps worth adding to the FAQ; the rest are
-// by-design handoffs. 'api_error' is set by us (not the model) on a fallback.
-const HANDOFF_REASONS = ['not_in_kb', 'unclear', 'user_request', 'upset', 'business', 'discount'];
-
-// The static rules half of the system prompt is now assembled from a tenant
-// config (prompt.ts). The knowledge block is appended per-request from
-// retrieval (see generateReply), not baked in here.
-const SYSTEM_RULES = buildSystemRules(DRAMACLAW);
+// Why the bot handed off, used to filter the coverage-gap log. Read off the skill so the
+// list the model is shown and the list we validate against cannot drift. 'api_error' is
+// deliberately absent — we set it ourselves on a fallback, the model never chooses it.
+const HANDOFF_REASONS = tenant.skill.handoffReasons.map((r) => r.name);
+const ACTION_NAMES = tenant.actions.map((a) => a.name);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const faqPath = path.join(__dirname, '..', 'knowledge', 'faq.md');
@@ -48,7 +49,9 @@ const faqPath = path.join(__dirname, '..', 'knowledge', 'faq.md');
 // (zero regression while the KB still fits the context window). Not the default anymore.
 const fullFaq = fs.existsSync(faqPath) ? fs.readFileSync(faqPath, 'utf8') : '';
 
-export type Action = 'answer' | 'account' | 'handoff' | 'bug';
+// Was a hardcoded union; the action set is now whatever the tenant's skill declares, so it
+// can only be validated at runtime (against ACTION_NAMES) rather than by the compiler.
+export type Action = string;
 
 export interface ChatMessage {
   role: string;
@@ -95,7 +98,7 @@ export async function generateReply(
   // retrieval outage never turns into a handoff. Empty result → also fall back.
   let knowledge: string;
   try {
-    knowledge = (await search(userText)).map((c) => c.content).join('\n\n');
+    knowledge = (await search(userText, { namespace: tenant.namespace })).map((c) => c.content).join('\n\n');
     if (!knowledge) knowledge = fullFaq;
   } catch (err) {
     console.error('retrieval failed, using full FAQ:', err.message);
@@ -110,7 +113,7 @@ export async function generateReply(
     const data = await callModel(
       JSON.stringify({
         model: MODEL,
-        max_tokens: 512,
+        max_tokens: MAX_TOKENS,
         temperature: TEMPERATURE,
         response_format: { type: 'json_object' },
         enable_thinking: false,
@@ -151,9 +154,10 @@ export async function generateReply(
       : { action: 'answer', reply: fallbackText, bugSummary: '', handoffReason: '', usage };
   }
 
-  const action: Action = (['answer', 'account', 'handoff', 'bug'] as const).includes(parsed.action)
-    ? parsed.action
-    : 'answer';
+  // An action the tenant doesn't run (a hallucinated name, or one belonging to an optional
+  // flow this tenant left off) degrades to 'answer': the reply text is still usable, and
+  // silently answering beats dispatching to a handler that doesn't exist.
+  const action: Action = ACTION_NAMES.includes(parsed.action) ? parsed.action : 'answer';
   // Only handoffs carry a reason. An untagged/invalid handoff defaults to
   // 'not_in_kb' — better to over-surface a real gap than hide it in the log.
   const handoffReason =

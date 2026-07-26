@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/src/server.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && cp -r knowledge dist/knowledge",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp -r knowledge dist/knowledge && cp -r skills dist/skills && cp -r tenants dist/tenants",
     "typecheck": "tsc --noEmit",
     "start": "node dist/src/server.js",
     "dev": "node --import tsx --env-file=.env src/server.ts",
@@ -22,7 +22,8 @@
   "dependencies": {
     "express": "^4.21.0",
     "fast-xml-parser": "^4.5.0",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

@@ -1,0 +1,59 @@
+# DramaClaw — the tenant binding.
+#
+# A tenant is a config file: which skills it runs, the values those skills' prompts need,
+# which knowledge namespace it answers from, and which model serves it. Everything in here
+# is product-specific by definition; nothing in skills/ should mention DramaClaw.
+#
+# Precedence note: these values are authoritative and are NOT overridable by environment
+# variables. Env stays for infrastructure that is the same for every tenant (API keys,
+# endpoints, DATABASE_URL); anything tenant-scoped belongs here, because a single global
+# env var cannot mean different things for two tenants.
+
+id: dramaclaw
+
+skills:
+  - cs-triage
+
+# Values for the {{slots}} declared in each skill's `config:` block.
+config:
+  productName: DramaClaw
+  domainTerms: AIGC、短剧、漫剧、解说剧、精品剧、IP、Beat、声线、积分
+
+# Optional actions (declared `optional: true` in the skill) to switch on for this tenant.
+# "apply for a test account" is a DramaClaw sales flow, not generic customer service.
+optional_actions:
+  - account
+
+# Which corpus in the shared `chunks` table this tenant answers from. Must match the
+# namespace `npm run index` writes into.
+namespace: dramaclaw
+
+model:
+  name: qwen3.7-plus
+  # Higher = more varied wording (less FAQ-parroting), lower = more repetitive. Grounding is
+  # enforced by the prompt, not by keeping this low.
+  temperature: 0.6
+  max_tokens: 512
+
+# Fixed strings the bot sends without asking the model. These were TypeScript constants in
+# server.ts/ai.ts; they are product voice, so they belong to the tenant.
+copy:
+  # Sent when a customer opens the chat (enter_session).
+  welcome: 您好！感谢您对DramaClaw的关注～
+
+  # 微信客服 has no persistent bottom-of-screen button, so this inline menu is re-offered
+  # after each normal answer — one tap away the moment a reply doesn't satisfy.
+  menu_head: 没有解决您的问题？
+  menu_item: 转人工客服
+  # Confirmation sent when the customer taps that menu item.
+  handoff_reply: 好的，正在为您转接人工客服，请稍候。
+
+  # Sent after a staff member distributes a test account.
+  credits_tip: 赠送积分有限 建议使用几百字的剧本片段测试功能哦，产品使用手册也有详细的功能介绍，欢迎向我们提意见～
+
+  # One gentle notice per window when a customer trips the per-customer rate limit.
+  rate_limit: 您发送得太频繁啦，请稍等一下再发送哦～
+
+  # Used when the model call itself fails — the customer is handed to a human rather than
+  # left on read.
+  api_error_reply: 抱歉，我暂时无法处理您的问题，正在为您转接人工客服，请稍候。

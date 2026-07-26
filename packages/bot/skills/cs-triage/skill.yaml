@@ -1,0 +1,64 @@
+# cs-triage — generic customer-service triage skill.
+#
+# One model call both ANSWERS the customer and TRIAGES the conversation, returning a
+# structured decision. Nothing product-specific belongs in this file: DramaClaw's name,
+# vocabulary and copy live in tenants/dramaclaw.yaml.
+#
+# This file is the single source of truth for the action contract. The action and
+# handoff-reason bullets in prompt.md are GENERATED from the lists below, so the prose the
+# model reads and the values the code validates against cannot drift apart.
+
+name: cs-triage
+description: Answer product questions from a knowledge base and triage what it can't answer.
+
+# Values the tenant must supply; every one is a {{slot}} in prompt.md. The loader rejects a
+# tenant that omits one or passes a key that isn't listed here.
+config:
+  productName:
+    description: Product name the assistant represents.
+  domainTerms:
+    description: In-domain vocabulary the bot should treat as product-related, not off-topic.
+
+# The action taxonomy. `prompt` is the bullet shown to the model; `handoff: true` means the
+# conversation is moved to the human queue after the reply is sent.
+#
+# `optional: true` actions are off unless the tenant lists them in `optional_actions` —
+# that's the seam for behaviour that isn't part of generic customer service. Keeping the
+# prose here (rather than in the tenant file) means it stays reviewed and version-controlled;
+# the tenant only decides whether it is on.
+actions:
+  - name: answer
+    handoff: false
+    prompt: '知识库能回答这个产品问题；或者客户问的是与 {{productName}} 无关的问题，此时用 reply 礼貌婉拒（只说你能协助 {{productName}} 相关的问题），不要转人工。'
+
+  - name: account
+    optional: true
+    handoff: true
+    prompt: '客户想申请测试账号 / 想要测试（关键词：申请账号、测试）。reply 固定为「稍等，马上为您申请测试账号」，工作人员会跟进分发账号。'
+
+  - name: handoff
+    handoff: true
+    requires: handoff_reason
+    prompt: '需要转人工——限于：与产品相关但知识库回答不了、看不懂客户在说什么、客户主动要求人工、客户情绪激动、涉及退款或投诉纠纷、客户提出商务合作（关键词：合作）、客户想谈充值优惠。注意：与产品无关的闲聊或常识问题不要转人工，用 answer 婉拒即可。'
+
+  - name: bug
+    handoff: true
+    requires: bug_summary
+    prompt: '客户在报告产品故障、bug、异常或使用问题'
+
+# Why a handoff happened, so the coverage-gap log can separate "genuinely couldn't answer"
+# from "was always meant for a human". `api_error` is deliberately absent: the code sets it
+# on a fallback, the model must never choose it.
+handoff_reasons:
+  - name: not_in_kb
+    prompt: 知识库里没有相关信息，答不了
+  - name: unclear
+    prompt: 看不懂客户想问什么
+  - name: user_request
+    prompt: 客户主动要求人工
+  - name: upset
+    prompt: 客户情绪激动、退款或投诉纠纷
+  - name: business
+    prompt: 商务合作
+  - name: discount
+    prompt: 想谈充值优惠
