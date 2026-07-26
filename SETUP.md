@@ -31,6 +31,7 @@ npm install
 cp packages/bot/.env.example packages/bot/.env
 #   fill: CORP_ID, KF_SECRET, DASHSCOPE_API_KEY, ADMIN_TOKEN (leave WECOM_* for Step 4)
 #   put real product info in packages/bot/knowledge/faq.md (the bot only answers from it)
+#   set product name, copy and model in packages/bot/tenants/<id>.yaml
 npm test && npm run build
 npm i -g pm2
 cd packages/bot && pm2 start dist/src/server.js --name wecom-kf-bot && pm2 save && pm2 startup
@@ -48,7 +49,8 @@ Admin console → 微信客服 → API → 接收消息设置:
 3. `pm2 restart wecom-kf-bot` **before** clicking Save (Save fires an immediate verification call using those values).
 4. Click Save.
 
-Optional copy overrides in `.env`: `WELCOME_MSG`, `HUMAN_MENU_HEAD`, `HUMAN_MENU_ITEM`, `HUMAN_HANDOFF_REPLY`.
+Customer-facing copy (welcome, the 转人工 menu, credits tip, rate-limit notice) lives in
+`packages/bot/tenants/dramaclaw.yaml` — not `.env`. Edit there, then `npm run build` and restart.
 
 ## 5. Smoke test (`pm2 logs wecom-kf-bot`)
 

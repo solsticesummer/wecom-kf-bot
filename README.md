@@ -55,11 +55,22 @@ Save fails? `pm2 logs`: `URL verification failed` = Token/AESKey mismatch; conne
 - `GET /unanswered?token=…[&reason=not_in_kb]` — handoffs / FAQ gaps. `reason`: `not_in_kb`, `unclear`, `user_request`, `upset`, `business`, `discount`, `api_error`.
 - `GET /usage?token=…` — per-day token spend.
 
-## Key env vars
+## Configuration
+
+Split in two. **`.env` is infrastructure** — the same for every tenant:
 
 - `ALLOWED_KF_IDS` — safety allowlist of kf accounts the bot may answer (set to your TEST account while testing; unset = answer all).
 - `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` — per-customer limit (default 15/60s).
-- `QWEN_MODEL` (default `qwen3.7-plus`), `QWEN_TEMPERATURE` (default `0.6`).
-- `WELCOME_MSG`, `HUMAN_MENU_HEAD`, `HUMAN_MENU_ITEM`, `HUMAN_HANDOFF_REPLY` — copy overrides.
+- `TENANT_ID` — which `packages/bot/tenants/<id>.yaml` this process serves (default `dramaclaw`).
+- Keys, endpoints, `DATABASE_URL`.
+
+**`packages/bot/tenants/<id>.yaml` is the product** — model, temperature, knowledge namespace,
+and every customer-facing string (welcome, 转人工 menu, credits tip, rate-limit notice). These
+are deliberately *not* env-overridable: one global env var can't mean two things once a second
+tenant exists.
+
+The prompt itself is `packages/bot/skills/cs-triage/` — `skill.yaml` (action contract) plus
+`prompt.md` (prose). The action and handoff-reason bullets in the prompt are generated from
+`skill.yaml`, so edit the contract there, not the prose.
 
 Runtime state (cursor, dedupe, history, bugs) lives in `packages/bot/data/` — keep it on persistent disk.
