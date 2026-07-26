@@ -22,6 +22,16 @@ EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "1024"))
 # only exercises the store/search plumbing.
 EMBEDDER = os.environ.get("KNOWLEDGE_EMBEDDER", "dashscope")
 
+# Cross-encoder rerank over the fused candidates. "auto" (default) enables it only when it
+# can actually work — a real embedder and a key — so offline runs don't make a doomed
+# network call per search. "off" disables; anything else forces it on.
+RERANK = os.environ.get("KNOWLEDGE_RERANK", "auto")
+RERANK_API_URL = os.environ.get(
+    "RERANK_API_URL",
+    "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+)
+RERANK_MODEL = os.environ.get("RERANK_MODEL", "qwen3-rerank")
+
 
 def api_key() -> str | None:
     return os.environ.get("MODELSTUDIO_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")

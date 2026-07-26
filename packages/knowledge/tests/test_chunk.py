@@ -4,9 +4,18 @@ Mirrors the intent of the TS bot's chunk tests: the ## section split must keep a
 pricing-table row intact and drop the title/preamble.
 """
 
+import os
+import sys
 import unittest
 
-from knowledge.chunk import chunk_markdown, chunk_text
+# Import the package from the source tree rather than relying on `pip install -e .`. The
+# strict editable install writes a .pth finder that doesn't auto-load on every machine (see
+# CLAUDE.md), which made these tests fail with ModuleNotFoundError depending on how the venv
+# happened to be built. A test that only runs on a correctly-installed checkout can't tell
+# you the code is broken.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from knowledge.chunk import chunk_markdown, chunk_text  # noqa: E402
 
 
 class ChunkMarkdown(unittest.TestCase):

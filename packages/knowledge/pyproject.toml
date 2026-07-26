@@ -13,6 +13,12 @@ dependencies = [
   "httpx>=0.27",
 ]
 
+[project.optional-dependencies]
+# Binary-document connectors. Kept optional because most projects have neither slides nor
+# PDFs, and connectors.py skips those files with a warning when the extractor is absent.
+# PDF additionally needs the `pdftotext` binary (brew install poppler) — not a pip package.
+docs = ["python-pptx>=0.6"]
+
 [project.scripts]
 knowledge-mcp = "knowledge.server:main"
 knowledge = "knowledge.cli:main"
