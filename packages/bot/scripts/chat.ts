@@ -8,22 +8,26 @@
 
 import readline from 'node:readline/promises';
 import { generateReply, type ChatMessage } from '../src/ai.js';
+import { loadTenant } from '../src/tenants.js';
 
 if (!process.env.DASHSCOPE_API_KEY) {
   console.error('DASHSCOPE_API_KEY is not set — run with: npm run chat');
   process.exit(1);
 }
 
+// Which product to talk to: TENANT_ID=demo npm run chat
+const tenant = loadTenant(process.env.TENANT_ID || 'dramaclaw');
+
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const history: ChatMessage[] = [];
 
-console.log('DramaClaw 客服 AI 测试 — 输入客户消息，Ctrl+C 退出\n');
+console.log(`${tenant.id} 客服 AI 测试 — 输入客户消息，Ctrl+C 退出\n`);
 
 while (true) {
   const text = (await rl.question('客户> ')).trim();
   if (!text) continue;
   const started = Date.now();
-  const { action, reply, bugSummary } = await generateReply(history, text);
+  const { action, reply, bugSummary } = await generateReply(tenant, history, text);
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`\n[action: ${action}${bugSummary ? ` | bug: ${bugSummary}` : ''} | ${seconds}s]`);
   console.log(`客服> ${reply}\n`);

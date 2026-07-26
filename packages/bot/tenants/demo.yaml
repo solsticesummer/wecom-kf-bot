@@ -1,0 +1,49 @@
+# A second, deliberately fake tenant that exists to keep the multi-tenant boundary honest.
+#
+# The registry, the per-tenant state dirs and the per-tenant prompt composition are all
+# things that LOOK right with one tenant configured and only prove themselves with two. This
+# one differs from dramaclaw in every dimension the code branches on:
+#
+#   - a different product name and domain terms  -> a different composed prompt
+#   - `account` left OFF                          -> a different action set, and the prompt's
+#                                                    generated "N选一" count becomes 三选一
+#   - a different knowledge namespace             -> retrieval must not see dramaclaw's chunks
+#   - its own fallback FAQ                        -> a retrieval outage must not leak
+#                                                    dramaclaw's prices into these answers
+#   - its own copy                                -> nothing DramaClaw-voiced reaches it
+#
+# It owns no kf accounts, so it can never be routed a real message. Delete it once a real
+# second tenant exists — but not before, or the boundary goes back to being untested.
+
+id: demo
+
+wecom:
+  kf_ids: []
+
+skills:
+  - cs-triage
+
+config:
+  productName: 示例助手
+  domainTerms: 示例、演示、测试
+
+# No optional_actions: this tenant runs the generic three-action CS contract only. The
+# "apply for a test account" flow is a DramaClaw sales motion, not customer service.
+
+namespace: demo
+
+fallback_faq: demo/faq.md
+
+model:
+  name: qwen3.7-plus
+  temperature: 0.6
+  max_tokens: 512
+
+copy:
+  welcome: 您好！这里是示例助手～
+  menu_head: 没有解决您的问题？
+  menu_item: 转人工客服
+  handoff_reply: 好的，正在为您转接人工客服，请稍候。
+  credits_tip: 感谢您的试用，欢迎向我们提意见～
+  rate_limit: 您发送得太频繁啦，请稍等一下再发送哦～
+  api_error_reply: 抱歉，我暂时无法处理您的问题，正在为您转接人工客服，请稍候。

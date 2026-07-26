@@ -12,12 +12,9 @@
 // - DashScope applies implicit context caching to the repeated system prompt
 //   automatically — no cache_control markup needed (unlike the Claude API).
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { search } from './retrieval.js';
 import { postJson } from './http.js';
-import { activeTenant } from './tenants.js';
+import type { Tenant } from './tenants.js';
 import type { Usage } from './state.js';
 
 const API_URL =
@@ -25,29 +22,11 @@ const API_URL =
   'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 
 // Everything tenant-scoped — the composed system prompt, the action taxonomy, the handoff
-// reasons, the model and its sampling settings — now comes from tenants/<id>.yaml + the
-// skill it names. Loaded once at boot: a malformed skill/tenant pair must fail at startup,
-// not halfway through a customer conversation. The knowledge block is still appended
-// per-request from retrieval (see generateReply), not baked in here.
-const tenant = activeTenant();
-const SYSTEM_RULES = tenant.systemRules;
-const MODEL = tenant.model.name;
-const TEMPERATURE = tenant.model.temperature;
-const MAX_TOKENS = tenant.model.maxTokens;
-
-const HANDOFF_REPLY = tenant.copy.apiErrorReply;
-
-// Why the bot handed off, used to filter the coverage-gap log. Read off the skill so the
-// list the model is shown and the list we validate against cannot drift. 'api_error' is
-// deliberately absent — we set it ourselves on a fallback, the model never chooses it.
-const HANDOFF_REASONS = tenant.skill.handoffReasons.map((r) => r.name);
-const ACTION_NAMES = tenant.actions.map((a) => a.name);
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const faqPath = path.join(__dirname, '..', 'knowledge', 'faq.md');
-// Kept only as the degradation fallback: if retrieval fails we inline the whole FAQ
-// (zero regression while the KB still fits the context window). Not the default anymore.
-const fullFaq = fs.existsSync(faqPath) ? fs.readFileSync(faqPath, 'utf8') : '';
+// reasons, the model and its sampling settings — arrives as the `tenant` argument to
+// generateReply. It used to be a module-level singleton read at import time, which quietly
+// stopped being correct the moment one process could serve two tenants: the first import
+// would have pinned one product's prompt and model for every conversation, including the
+// other tenant's. The knowledge block is still appended per-request from retrieval.
 
 // Was a hardcoded union; the action set is now whatever the tenant's skill declares, so it
 // can only be validated at runtime (against ACTION_NAMES) rather than by the compiler.
@@ -90,31 +69,39 @@ async function callModel(body: string): Promise<any> {
 // Never throws — API/parse failures degrade to a handoff so the customer is
 // picked up by a human instead of being left on read.
 export async function generateReply(
+  tenant: Tenant,
   history: ChatMessage[],
   userText: string,
 ): Promise<GenerateResult> {
+  const HANDOFF_REPLY = tenant.copy.apiErrorReply;
+  // Read off the skill so the list the model is shown and the list we validate against
+  // cannot drift. 'api_error' is deliberately absent — we set it ourselves on a fallback,
+  // the model never chooses it.
+  const HANDOFF_REASONS = tenant.skill.handoffReasons.map((r) => r.name);
+  const ACTION_NAMES = tenant.actions.map((a) => a.name);
+
   // Retrieve the few relevant KB chunks for this question. Any failure (no DB, no
-  // Model Studio key, embedding/rerank down) degrades to inlining the full FAQ, so a
-  // retrieval outage never turns into a handoff. Empty result → also fall back.
+  // Model Studio key, embedding/rerank down) degrades to inlining THIS TENANT's full FAQ, so
+  // a retrieval outage never turns into a handoff. Empty result → also fall back.
   let knowledge: string;
   try {
     knowledge = (await search(userText, { namespace: tenant.namespace })).map((c) => c.content).join('\n\n');
-    if (!knowledge) knowledge = fullFaq;
+    if (!knowledge) knowledge = tenant.fallbackFaq;
   } catch (err) {
-    console.error('retrieval failed, using full FAQ:', err.message);
-    knowledge = fullFaq;
+    console.error(`retrieval failed for ${tenant.id}, using full FAQ:`, err.message);
+    knowledge = tenant.fallbackFaq;
   }
   // Static rules first (cacheable prefix), variable knowledge last.
-  const system = `${SYSTEM_RULES}\n\n# 知识库\n${knowledge}`;
+  const system = `${tenant.systemRules}\n\n# 知识库\n${knowledge}`;
 
   let raw: string;
   let usage: Usage | undefined; // token counts from the API, threaded out so callers can log cost
   try {
     const data = await callModel(
       JSON.stringify({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        temperature: TEMPERATURE,
+        model: tenant.model.name,
+        max_tokens: tenant.model.maxTokens,
+        temperature: tenant.model.temperature,
         response_format: { type: 'json_object' },
         enable_thinking: false,
         messages: [

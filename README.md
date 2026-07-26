@@ -59,9 +59,9 @@ Save fails? `pm2 logs`: `URL verification failed` = Token/AESKey mismatch; conne
 
 Split in two. **`.env` is infrastructure** — the same for every tenant:
 
-- `ALLOWED_KF_IDS` — safety allowlist of kf accounts the bot may answer (set to your TEST account while testing; unset = answer all).
 - `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` — per-customer limit (default 15/60s).
-- `TENANT_ID` — which `packages/bot/tenants/<id>.yaml` this process serves (default `dramaclaw`).
+- `ALLOWED_KF_IDS` — optional extra narrowing for a staged rollout. **Not** the safety mechanism: routing is (see below).
+- `TENANT_ID` — dev scripts only (`npm run chat` / `demo`). `DEFAULT_TENANT_ID` — which tenant the legacy un-prefixed admin routes report on.
 - Keys, endpoints, `DATABASE_URL`.
 
 **`packages/bot/tenants/<id>.yaml` is the product** — model, temperature, knowledge namespace,
@@ -72,5 +72,22 @@ tenant exists.
 The prompt itself is `packages/bot/skills/cs-triage/` — `skill.yaml` (action contract) plus
 `prompt.md` (prose). The action and handoff-reason bullets in the prompt are generated from
 `skill.yaml`, so edit the contract there, not the prose.
+
+## Multi-tenancy
+
+One process serves every `tenants/*.yaml`. The 微信客服 callback is enterprise-wide — every kf
+account's messages land on one endpoint — so each message is routed to the tenant whose
+`wecom.kf_ids` claims its `open_kfid`.
+
+**This is the safety mechanism.** A kf account no tenant claims has no tenant to answer as,
+so its messages are dropped. Nothing answers your live 官方客服 until you put its `open_kfid`
+in a tenant file. Two tenants claiming one account refuses to boot.
+
+Each tenant gets its own conversation history, bugs, coverage gaps, usage, rate-limit budget
+and retrieval namespace. The sync cursor and msgid dedupe stay corp-wide, because the sync
+stream is. Admin routes are per tenant: `/t/<tenant>/bugs|unanswered|usage`, plus `/tenants`.
+
+`tenants/demo.yaml` is a fake second tenant kept purely to hold the boundary honest — it owns
+no kf accounts and can never receive a real message.
 
 Runtime state (cursor, dedupe, history, bugs) lives in `packages/bot/data/` — keep it on persistent disk.

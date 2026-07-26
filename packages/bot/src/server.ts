@@ -12,8 +12,9 @@ import { WecomClient, ServiceState, type KfMessage } from './wecom.js';
 import { StateStore } from './state.js';
 import { RateLimiter } from './ratelimit.js';
 import { generateReply } from './ai.js';
-import { activeTenant } from './tenants.js';
+import { loadRegistry, type Tenant } from './tenants.js';
 import { runAction } from './actions.js';
+import path from 'node:path';
 
 // Fail-fast on a missing required env var, and narrow `string | undefined` to
 // `string` for the rest of the module. Replaces the old validation loop.
@@ -36,11 +37,13 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const DATA_DIR = process.env.DATA_DIR || './data';
 const PORT = Number(process.env.PORT) || 3000;
 
-// The product this deployment serves: its skills, prompt, knowledge namespace, model and
-// all customer-facing copy. Everything below reads from it instead of holding DramaClaw's
-// words inline, which is what lets this file be channel code rather than product code.
-const tenant = activeTenant();
-const COPY = tenant.copy;
+// Every product this deployment serves, indexed by the kf accounts each one owns. A
+// malformed tenant, or two tenants claiming one kf account, throws here and the process
+// never starts listening.
+const registry = loadRegistry();
+console.log(
+  `tenants: ${registry.all().map((t) => `${t.id}[${t.kfIds.join(',') || 'no kf accounts'}]`).join(' ')}`,
+);
 
 // "转人工客服" menu. WeCom 微信客服 has no persistent bottom-of-screen button,
 // so we re-offer this inline menu after each bot answer — always one tap away
@@ -49,13 +52,11 @@ const COPY = tenant.copy;
 // directly (no AI call, no intent-guessing).
 const HUMAN_HANDOFF_ID = 'human_service'; // must match on send and on the tap
 
-// Safety allowlist of kf accounts (open_kfid) the bot is allowed to answer.
-// The 微信客服 callback is enterprise-wide — EVERY kf account's messages arrive
-// at this one endpoint — so without this, enabling the callback would make the
-// bot answer the live 官方客服's real customers. Set ALLOWED_KF_IDS to your
-// TEST account's open_kfid while testing; leave it UNSET in production to
-// answer every kf account. Fail-closed: when set, anything not on the list
-// (including messages we can't attribute to a kf account) is ignored.
+// Extra narrowing on top of the registry, for testing against production safely: when set,
+// only these kf accounts are served even if a tenant claims others. The registry is now what
+// makes the bot fail-closed (an unregistered kf account has no tenant to answer it), so this
+// is no longer the safety mechanism — it's a temporary "only this one account" switch for a
+// staged rollout. Leave it unset in normal operation.
 const ALLOWED_KF_IDS = new Set(
   (process.env.ALLOWED_KF_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
 );
@@ -73,7 +74,24 @@ const MAX_MSG_AGE_SECONDS = 300;
 
 const wxCrypto = new WecomCrypto(WECOM_TOKEN, WECOM_AES_KEY, CORP_ID);
 const wecom = new WecomClient(CORP_ID, KF_SECRET);
-const store = new StateStore(DATA_DIR);
+
+// TWO LEVELS OF STATE, because they have genuinely different owners.
+//
+// The 微信客服 sync stream is enterprise-wide: one cursor and one msgid space cover every kf
+// account in the corp. Those belong to the CORP — partitioning them per tenant would replay
+// messages (each tenant's cursor lagging the shared stream) and break dedupe for anything we
+// drop before knowing which tenant it belongs to.
+//
+// Everything else — conversation history, bug reports, coverage gaps, token usage, pending
+// credits tips — is per-TENANT, and must be, since it is customer data belonging to one
+// product. A shared history store would let one tenant's conversation context leak into
+// another's prompt.
+const systemStore = new StateStore(DATA_DIR);
+const tenantStores = new Map<string, StateStore>(
+  registry.all().map((t) => [t.id, new StateStore(path.join(DATA_DIR, 'tenants', t.id))]),
+);
+const storeFor = (tenant: Tenant): StateStore => tenantStores.get(tenant.id)!;
+
 const rateLimiter = new RateLimiter({
   maxRequests: RATE_LIMIT_MAX,
   windowMs: RATE_LIMIT_WINDOW_SECONDS * 1000,
@@ -88,35 +106,67 @@ app.use(express.text({ type: '*/*' }));
 
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
-// Staff-facing bug list. Requires ADMIN_TOKEN to be configured AND supplied —
-// bug reports contain customer messages, so this must never be public.
-app.get('/bugs', (req: Request, res: Response) => {
+// Staff-facing admin surface. Every route is gated on ADMIN_TOKEN being configured AND
+// supplied — bugs and coverage gaps contain verbatim customer messages, so this must never
+// be public.
+//
+// The token stays an env var rather than moving into the tenant file, which is a deliberate
+// departure from the original multi-tenant sketch: tenants/*.yaml is committed to git, and
+// per-tenant tokens there would put credentials in the repo. Real per-tenant auth is a
+// productization concern (tenants in Postgres, proper authn) — until then one operator token
+// guarding a tenant-scoped path is the honest version.
+function authed(req: Request, res: Response): boolean {
   if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
-    return res.status(403).json({ error: 'forbidden' });
+    res.status(403).json({ error: 'forbidden' });
+    return false;
   }
-  res.json(store.getBugs());
+  return true;
+}
+
+// Resolve :tenantId, or 404. Un-prefixed legacy routes fall back to the default tenant so
+// the URLs in SETUP.md keep working on a single-tenant deployment.
+function resolveStore(req: Request, res: Response): StateStore | undefined {
+  const id = req.params.tenantId;
+  const tenant = id ? registry.get(id) : registry.defaultTenant;
+  if (!tenant) {
+    res.status(404).json({ error: `unknown tenant ${id}` });
+    return undefined;
+  }
+  return storeFor(tenant);
+}
+
+app.get('/tenants', (req: Request, res: Response) => {
+  if (!authed(req, res)) return;
+  res.json(registry.all().map((t) => ({ id: t.id, namespace: t.namespace, kfIds: t.kfIds })));
 });
 
-// Staff-facing coverage-gap list: questions the bot couldn't answer. Same
-// ADMIN_TOKEN gate as /bugs — the entries contain customer messages.
-app.get('/unanswered', (req: Request, res: Response) => {
-  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
-  // ?reason=not_in_kb narrows to one handoff reason (e.g. the genuine FAQ gaps);
-  // no reason param returns everything.
-  const list = store.getUnanswered();
-  res.json(req.query.reason ? list.filter((e) => e.reason === req.query.reason) : list);
-});
+for (const p of ['/bugs', '/t/:tenantId/bugs']) {
+  app.get(p, (req: Request, res: Response) => {
+    if (!authed(req, res)) return;
+    const store = resolveStore(req, res);
+    if (store) res.json(store.getBugs());
+  });
+}
 
-// Staff-facing per-day token usage, to watch free-quota / cost burn.
-// Not customer data, but gated the same way for consistency.
-app.get('/usage', (req: Request, res: Response) => {
-  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
-  res.json(store.getUsage());
-});
+for (const p of ['/unanswered', '/t/:tenantId/unanswered']) {
+  app.get(p, (req: Request, res: Response) => {
+    if (!authed(req, res)) return;
+    const store = resolveStore(req, res);
+    if (!store) return;
+    // ?reason=not_in_kb narrows to one handoff reason (e.g. the genuine FAQ gaps);
+    // no reason param returns everything.
+    const list = store.getUnanswered();
+    res.json(req.query.reason ? list.filter((e) => e.reason === req.query.reason) : list);
+  });
+}
+
+for (const p of ['/usage', '/t/:tenantId/usage']) {
+  app.get(p, (req: Request, res: Response) => {
+    if (!authed(req, res)) return;
+    const store = resolveStore(req, res);
+    if (store) res.json(store.getUsage());
+  });
+}
 
 // Step 1: URL verification handshake (fires when you click save in the console)
 app.get('/wecom/callback', (req: Request, res: Response) => {
@@ -169,7 +219,7 @@ function handleSyncEvent(syncToken: string): void {
 }
 
 async function processMessages(syncToken: string): Promise<void> {
-  const { messages, cursor } = await wecom.syncMessages(syncToken, store.cursor);
+  const { messages, cursor } = await wecom.syncMessages(syncToken, systemStore.cursor);
 
   for (const msg of messages) {
     // Per-message isolation: one failed send (e.g. user blocked the account)
@@ -184,7 +234,7 @@ async function processMessages(syncToken: string): Promise<void> {
   // Cursor is committed only after the batch is processed. If we crash
   // mid-batch, the next sync re-fetches from the old cursor and the msgid
   // dedupe (marked after a successful reply) skips what was already answered.
-  store.setCursor(cursor);
+  systemStore.setCursor(cursor);
 }
 
 // Move the session into the human queue (待接入池). Best-effort: if it fails
@@ -200,26 +250,31 @@ async function transferToHuman(openKfId: string, externalUserId: string): Promis
 }
 
 async function handleOneMessage(msg: KfMessage): Promise<void> {
-  if (store.hasSeen(msg.msgid)) return;
+  if (systemStore.hasSeen(msg.msgid)) return;
 
   const ageSeconds = Date.now() / 1000 - (msg.send_time || 0);
   if (msg.send_time && ageSeconds > MAX_MSG_AGE_SECONDS) {
-    store.markSeen(msg.msgid); // too old — swallow silently, don't reply
+    systemStore.markSeen(msg.msgid); // too old — swallow silently, don't reply
     return;
   }
 
-  // Safety guard: only touch allowed kf accounts (see ALLOWED_KF_IDS). Regular
-  // messages carry open_kfid; enter_session events carry it under .event. When
-  // the allowlist is active, drop anything that doesn't positively match — this
-  // is what keeps a test run from ever answering the live 官方客服.
-  if (ALLOWED_KF_IDS.size && !ALLOWED_KF_IDS.has(msg.open_kfid || msg.event?.open_kfid || '')) {
-    store.markSeen(msg.msgid);
+  // Route to the tenant that owns this kf account. Regular messages carry open_kfid;
+  // enter_session events carry it under .event. No tenant (or no kf account at all) means we
+  // have no product to answer as — drop it. This is the fail-closed guarantee that used to
+  // be ALLOWED_KF_IDS: the enterprise-wide callback delivers EVERY kf account's messages
+  // here, including the live 官方客服's, and only registered accounts get served.
+  const kfId = msg.open_kfid || msg.event?.open_kfid || '';
+  const tenant = registry.forKfId(kfId);
+  if (!tenant || (ALLOWED_KF_IDS.size && !ALLOWED_KF_IDS.has(kfId))) {
+    systemStore.markSeen(msg.msgid);
     return;
   }
+  const COPY = tenant.copy;
+  const store = storeFor(tenant);
 
   // Greet users who just opened the chat (event arrives via the same sync)
   if (msg.msgtype === 'event' && msg.event?.event_type === 'enter_session') {
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     if (msg.event.external_userid) {
       await wecom.sendText(msg.event.open_kfid!, msg.event.external_userid, COPY.welcome);
     }
@@ -231,11 +286,11 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   // follow up with the credits tip. Send may be rejected while the human
   // still owns the session; keep the flag so a later event retries.
   if (msg.origin === 5 && msg.external_userid && store.hasPendingTip(msg.external_userid)) {
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     try {
       await wecom.sendText(msg.open_kfid!, msg.external_userid, COPY.creditsTip);
       store.clearPendingTip(msg.external_userid);
-      console.log(`[tip] sent credits tip to ${msg.external_userid}`);
+      console.log(`[tip:${tenant.id}] sent credits tip to ${msg.external_userid}`);
     } catch (err) {
       console.error(`credits tip send failed for ${msg.external_userid} (will retry on next event):`, err.message);
     }
@@ -244,12 +299,12 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
 
   // origin 3 = sent by the customer; skip our own/system messages
   if (msg.origin !== 3 || msg.msgtype !== 'text') {
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     return;
   }
   const userText = msg.text?.content?.trim();
   if (!userText) {
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     return;
   }
   const openKfId = msg.open_kfid!;
@@ -258,9 +313,11 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   // Rate limit per customer BEFORE any downstream call (getServiceState +
   // generateReply): a spammer must not be able to burn Qwen tokens or WeCom
   // quota. markSeen so WeCom's retry doesn't reprocess the dropped message.
-  const gate = rateLimiter.allow(externalUserId);
+  // Key includes the tenant: the same person can be a customer of two tenants, and one
+  // conversation shouldn't eat the other's budget.
+  const gate = rateLimiter.allow(`${tenant.id}:${externalUserId}`);
   if (!gate.allowed) {
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     console.warn(`[ratelimit] ${externalUserId} over ${RATE_LIMIT_MAX}/${RATE_LIMIT_WINDOW_SECONDS}s`);
     if (gate.notify) {
       // One gentle notice per window. Best-effort: if a human already owns the
@@ -285,7 +342,7 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
     console.error(`service_state check failed for ${externalUserId}:`, err.message);
   }
   if (serviceState === ServiceState.QUEUED_FOR_HUMAN || serviceState === ServiceState.HUMAN) {
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     return;
   }
   if (serviceState === ServiceState.NEW || serviceState === ServiceState.ENDED) {
@@ -306,11 +363,11 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
     // Send the confirmation BEFORE the transfer — once the session moves to the
     // human queue the bot may no longer be allowed to message the customer.
     await wecom.sendText(openKfId, externalUserId, COPY.handoffReply);
-    store.markSeen(msg.msgid);
+    systemStore.markSeen(msg.msgid);
     // A tap is a handoff the customer asked for outright, so it goes through the same
     // handler as a model-decided one and lands in the same coverage-gap log — no second
     // copy of the logging to keep in sync.
-    console.log(`[handoff:button] ${externalUserId}`);
+    console.log(`[handoff:button:${tenant.id}] ${externalUserId}`);
     runAction('handoff', {
       store,
       userId: externalUserId,
@@ -326,8 +383,8 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
     return;
   }
 
-  console.log(`[msg] ${externalUserId}: ${userText}`);
-  const result = await generateReply(store.getHistory(externalUserId), userText);
+  console.log(`[msg:${tenant.id}] ${externalUserId}: ${userText}`);
+  const result = await generateReply(tenant, store.getHistory(externalUserId), userText);
   const { action, reply, usage } = result;
   if (usage) store.addUsage(usage); // track token spend per day
 
@@ -341,9 +398,9 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   await wecom.sendText(openKfId, externalUserId, reply);
   // markSeen AFTER the send: a crash in between can cause one duplicate reply,
   // but marking first would turn a crash into a customer never getting answered.
-  store.markSeen(msg.msgid);
+  systemStore.markSeen(msg.msgid);
   store.appendHistory(externalUserId, userText, reply);
-  console.log(`[reply:${action}] ${externalUserId}: ${reply.slice(0, 80)}`);
+  console.log(`[reply:${tenant.id}:${action}] ${externalUserId}: ${reply.slice(0, 80)}`);
 
   // Re-offer a human after a normal answer, so "转人工客服" is always one tap
   // away if the bot's reply didn't satisfy. Skipped when a human is already

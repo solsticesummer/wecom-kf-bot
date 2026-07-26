@@ -10,11 +10,15 @@
 
 import express, { type Request, type Response } from 'express';
 import { generateReply } from '../src/ai.js';
+import { loadTenant } from '../src/tenants.js';
 
 if (!process.env.DASHSCOPE_API_KEY) {
   console.error('DASHSCOPE_API_KEY is not set — run: npm run demo');
   process.exit(1);
 }
+
+// Which product the playground speaks as: TENANT_ID=demo npm run demo
+const tenant = loadTenant(process.env.TENANT_ID || 'dramaclaw');
 
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
@@ -26,7 +30,7 @@ app.post('/chat', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'message required' });
   }
   try {
-    const r = await generateReply(history, message);
+    const r = await generateReply(tenant, history, message);
     res.json(r);
   } catch (err) {
     console.error('demo /chat error:', err.message);
@@ -37,7 +41,7 @@ app.post('/chat', async (req: Request, res: Response) => {
 app.get('/', (_req: Request, res: Response) => res.type('html').send(PAGE));
 
 app.listen(PORT, () => {
-  console.log(`DramaClaw 客服 测试台 → http://localhost:${PORT}`);
+  console.log(`${tenant.id} 客服 测试台 → http://localhost:${PORT}`);
 });
 
 const PAGE = `<!doctype html>

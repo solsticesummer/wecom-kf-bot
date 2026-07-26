@@ -11,6 +11,16 @@
 
 id: dramaclaw
 
+# Which WeCom kf accounts (open_kfid) this tenant answers for. The 微信客服 callback is
+# enterprise-wide, so this list is what routes a message here — and what keeps the bot away
+# from every account NOT listed, including the live 官方客服.
+#
+# EMPTY MEANS THE BOT ANSWERS NOBODY. That is intentional while there is no deployment: the
+# registry is fail-closed, so an unlisted account has no tenant and its messages are dropped.
+# Before going live, run `npm run list-kf` and paste the TEST account's open_kfid here first.
+wecom:
+  kf_ids: []
+
 skills:
   - cs-triage
 
@@ -27,6 +37,12 @@ optional_actions:
 # Which corpus in the shared `chunks` table this tenant answers from. Must match the
 # namespace `npm run index` writes into.
 namespace: dramaclaw
+
+# Inlined verbatim when retrieval fails, so a database or embeddings outage degrades to
+# "answer from the whole FAQ" instead of a customer-visible handoff. Path is relative to
+# packages/bot/knowledge/ and must stay inside it. Per-tenant: a shared fallback would paste
+# this product's prices into another tenant's prompt the moment the DB blipped.
+fallback_faq: faq.md
 
 model:
   name: qwen3.7-plus
