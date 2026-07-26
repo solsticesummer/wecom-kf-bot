@@ -86,38 +86,54 @@ const parseVec = (v: unknown): number[] => (typeof v === 'string' ? JSON.parse(v
 // catch the same fact restated across sources. Tunable via env.
 const DEDUP_SIM = Number(process.env.RETRIEVAL_DEDUP_SIM || 0.92);
 
+// Which corpus to search. One `chunks` table can hold many tenants'/projects' knowledge
+// side by side, so every read is scoped to one namespace. Stage B replaces this env
+// default with the value from the tenant config.
+const DEFAULT_NAMESPACE = process.env.KB_NAMESPACE || 'dramaclaw';
+
 /**
  * Hybrid recall (dense ∪ trigram) → qwen3-rerank → greedy top-k with near-duplicate
- * suppression. Throws on embed/DB/rerank failure — the caller degrades to the full FAQ.
+ * suppression, scoped to one `namespace`. Throws on embed/DB/rerank failure — the caller
+ * degrades to the full FAQ.
  */
 export async function search(
   queryText: string,
   {
     k = Number(process.env.RETRIEVAL_TOP_K || 5),
     candidates = Number(process.env.RETRIEVAL_CANDIDATES || 20),
-  }: { k?: number; candidates?: number } = {},
+    namespace = DEFAULT_NAMESPACE,
+  }: { k?: number; candidates?: number; namespace?: string } = {},
 ): Promise<Chunk[]> {
   const qvec = toVectorLiteral(await embed(queryText));
 
   // Dense (cosine <=>) ∪ keyword (trigram % + similarity) recall; UNION de-dupes by row.
+  // The namespace filter must be on BOTH arms — dropping it from either one silently
+  // feeds another tenant's chunks into this tenant's answer, which no test would catch
+  // until a second namespace exists.
+  //
+  // pgvector caveat for later: with a WHERE alongside `ORDER BY embedding <=> …`, the HNSW
+  // scan filters AFTER walking the index, so once this table holds many namespaces the
+  // dense arm can return fewer than `candidates` rows. Harmless at the current corpus size;
+  // the fixes when it matters are a per-namespace partial index or a larger `hnsw.ef_search`.
   const { rows } = await query(
     `WITH dense AS (
         SELECT id, source, section, content, embedding
         FROM chunks
+        WHERE namespace = $4
         ORDER BY embedding <=> $1::vector
         LIMIT $2
      ),
      kw AS (
         SELECT id, source, section, content, embedding
         FROM chunks
-        WHERE content % $3
+        WHERE namespace = $4 AND content % $3
         ORDER BY similarity(content, $3) DESC
         LIMIT $2
      )
      SELECT * FROM dense
      UNION
      SELECT * FROM kw`,
-    [qvec, candidates, queryText],
+    [qvec, candidates, queryText, namespace],
   );
 
   if (rows.length === 0) return [];

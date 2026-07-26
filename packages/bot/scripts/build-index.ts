@@ -69,12 +69,17 @@ function whitepaperChunks(): SourceChunk[] {
 
 // --- Embed + reload one source in a transaction ----------------------------------------
 
-async function reloadSource(pool: Pool, source: string, chunks: SourceChunk[]): Promise<void> {
+async function reloadSource(
+  pool: Pool,
+  namespace: string,
+  source: string,
+  chunks: SourceChunk[],
+): Promise<void> {
   if (chunks.length === 0) {
-    console.log(`${source}: 0 chunks (skipped)`);
+    console.log(`${namespace}/${source}: 0 chunks (skipped)`);
     return;
   }
-  process.stdout.write(`${source}: embedding ${chunks.length} chunks`);
+  process.stdout.write(`${namespace}/${source}: embedding ${chunks.length} chunks`);
   const vectors: number[][] = [];
   for (const c of chunks) {
     vectors.push(await embed(c.content)); // sequential: stays well under rate limits
@@ -85,15 +90,18 @@ async function reloadSource(pool: Pool, source: string, chunks: SourceChunk[]): 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM chunks WHERE source = $1', [source]);
+    // Both keys in the DELETE. Scoping it to `source` alone would clear that document
+    // across EVERY namespace — re-indexing one tenant's faq.md would silently wipe the next
+    // tenant's, and the bot would only degrade at the next customer question.
+    await client.query('DELETE FROM chunks WHERE namespace = $1 AND source = $2', [namespace, source]);
     for (let i = 0; i < chunks.length; i++) {
       await client.query(
-        'INSERT INTO chunks (source, section, content, embedding) VALUES ($1,$2,$3,$4::vector)',
-        [source, chunks[i].section, chunks[i].content, toVectorLiteral(vectors[i])],
+        'INSERT INTO chunks (namespace, source, section, content, embedding) VALUES ($1,$2,$3,$4,$5::vector)',
+        [namespace, source, chunks[i].section, chunks[i].content, toVectorLiteral(vectors[i])],
       );
     }
     await client.query('COMMIT');
-    console.log(`${source}: reloaded ${chunks.length} chunks`);
+    console.log(`${namespace}/${source}: reloaded ${chunks.length} chunks`);
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -102,11 +110,15 @@ async function reloadSource(pool: Pool, source: string, chunks: SourceChunk[]): 
   }
 }
 
+// Which namespace this run writes into — must match what retrieval.ts reads (Stage B moves
+// both onto the tenant config so they can't drift apart).
+const NAMESPACE = process.env.KB_NAMESPACE || 'dramaclaw';
+
 try {
   const pool = getPool();
-  await reloadSource(pool, 'faq.md', faqChunks());
-  await reloadSource(pool, 'manual', manualChunks());
-  await reloadSource(pool, 'whitepaper', whitepaperChunks());
+  await reloadSource(pool, NAMESPACE, 'faq.md', faqChunks());
+  await reloadSource(pool, NAMESPACE, 'manual', manualChunks());
+  await reloadSource(pool, NAMESPACE, 'whitepaper', whitepaperChunks());
   console.log('index: done');
 } catch (err) {
   console.error('index failed:', err.message);
