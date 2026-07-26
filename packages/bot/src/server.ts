@@ -12,6 +12,8 @@ import { WecomClient, ServiceState, type KfMessage } from './wecom.js';
 import { StateStore } from './state.js';
 import { RateLimiter } from './ratelimit.js';
 import { generateReply } from './ai.js';
+import { activeTenant } from './tenants.js';
+import { runAction } from './actions.js';
 
 // Fail-fast on a missing required env var, and narrow `string | undefined` to
 // `string` for the rest of the module. Replaces the old validation loop.
@@ -34,7 +36,11 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const DATA_DIR = process.env.DATA_DIR || './data';
 const PORT = Number(process.env.PORT) || 3000;
 
-const WELCOME_MSG = process.env.WELCOME_MSG || '您好！感谢您对DramaClaw的关注～';
+// The product this deployment serves: its skills, prompt, knowledge namespace, model and
+// all customer-facing copy. Everything below reads from it instead of holding DramaClaw's
+// words inline, which is what lets this file be channel code rather than product code.
+const tenant = activeTenant();
+const COPY = tenant.copy;
 
 // "转人工客服" menu. WeCom 微信客服 has no persistent bottom-of-screen button,
 // so we re-offer this inline menu after each bot answer — always one tap away
@@ -42,10 +48,6 @@ const WELCOME_MSG = process.env.WELCOME_MSG || '您好！感谢您对DramaClaw�
 // text message carrying text.menu_id === HUMAN_HANDOFF_ID, which we act on
 // directly (no AI call, no intent-guessing).
 const HUMAN_HANDOFF_ID = 'human_service'; // must match on send and on the tap
-const HUMAN_MENU_HEAD = process.env.HUMAN_MENU_HEAD || '没有解决您的问题？';
-const HUMAN_MENU_ITEM = process.env.HUMAN_MENU_ITEM || '转人工客服';
-const HUMAN_HANDOFF_REPLY =
-  process.env.HUMAN_HANDOFF_REPLY || '好的，正在为您转接人工客服，请稍候。';
 
 // Safety allowlist of kf accounts (open_kfid) the bot is allowed to answer.
 // The 微信客服 callback is enterprise-wide — EVERY kf account's messages arrive
@@ -58,18 +60,12 @@ const ALLOWED_KF_IDS = new Set(
   (process.env.ALLOWED_KF_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
 );
 
-// Sent automatically after a staff member distributes a test account
-// (detected via the staff member's own message in the session).
-const CREDITS_TIP =
-  '赠送积分有限 建议使用几百字的剧本片段测试功能哦，产品使用手册也有详细的功能介绍，欢迎向我们提意见～';
-
 // Per-customer rate limit: caps how many messages one external_userid can send
 // per window before we stop answering (protects Qwen tokens / WeCom quota from
-// a spammer). Generous for a real human, fatal to a script.
+// a spammer). Generous for a real human, fatal to a script. The thresholds stay
+// env-driven (infrastructure protection); only the notice text is tenant copy.
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 15);
 const RATE_LIMIT_WINDOW_SECONDS = Number(process.env.RATE_LIMIT_WINDOW_SECONDS || 60);
-const RATE_LIMIT_MSG =
-  process.env.RATE_LIMIT_MSG || '您发送得太频繁啦，请稍等一下再发送哦～';
 
 // Ignore anything older than this on sync — prevents replying to a backlog of
 // stale messages on first deploy (empty cursor returns history, not just new).
@@ -225,7 +221,7 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   if (msg.msgtype === 'event' && msg.event?.event_type === 'enter_session') {
     store.markSeen(msg.msgid);
     if (msg.event.external_userid) {
-      await wecom.sendText(msg.event.open_kfid!, msg.event.external_userid, WELCOME_MSG);
+      await wecom.sendText(msg.event.open_kfid!, msg.event.external_userid, COPY.welcome);
     }
     return;
   }
@@ -237,7 +233,7 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   if (msg.origin === 5 && msg.external_userid && store.hasPendingTip(msg.external_userid)) {
     store.markSeen(msg.msgid);
     try {
-      await wecom.sendText(msg.open_kfid!, msg.external_userid, CREDITS_TIP);
+      await wecom.sendText(msg.open_kfid!, msg.external_userid, COPY.creditsTip);
       store.clearPendingTip(msg.external_userid);
       console.log(`[tip] sent credits tip to ${msg.external_userid}`);
     } catch (err) {
@@ -270,7 +266,7 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
       // One gentle notice per window. Best-effort: if a human already owns the
       // session WeCom may reject the send — that's fine, swallow it.
       try {
-        await wecom.sendText(openKfId, externalUserId, RATE_LIMIT_MSG);
+        await wecom.sendText(openKfId, externalUserId, COPY.rateLimit);
       } catch (err) {
         console.error(`ratelimit notice failed for ${externalUserId}:`, err.message);
       }
@@ -309,25 +305,36 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   if (msg.text?.menu_id === HUMAN_HANDOFF_ID) {
     // Send the confirmation BEFORE the transfer — once the session moves to the
     // human queue the bot may no longer be allowed to message the customer.
-    await wecom.sendText(openKfId, externalUserId, HUMAN_HANDOFF_REPLY);
+    await wecom.sendText(openKfId, externalUserId, COPY.handoffReply);
     store.markSeen(msg.msgid);
-    store.addUnanswered({
-      userId: externalUserId,
-      message: userText,
-      reply: HUMAN_HANDOFF_REPLY,
-      reason: 'user_request',
-    });
+    // A tap is a handoff the customer asked for outright, so it goes through the same
+    // handler as a model-decided one and lands in the same coverage-gap log — no second
+    // copy of the logging to keep in sync.
     console.log(`[handoff:button] ${externalUserId}`);
+    runAction('handoff', {
+      store,
+      userId: externalUserId,
+      userText,
+      result: {
+        action: 'handoff',
+        reply: COPY.handoffReply,
+        bugSummary: '',
+        handoffReason: 'user_request',
+      },
+    });
     await transferToHuman(openKfId, externalUserId);
     return;
   }
 
   console.log(`[msg] ${externalUserId}: ${userText}`);
-  const { action, reply, bugSummary, handoffReason, usage } = await generateReply(
-    store.getHistory(externalUserId),
-    userText,
-  );
+  const result = await generateReply(store.getHistory(externalUserId), userText);
+  const { action, reply, usage } = result;
   if (usage) store.addUsage(usage); // track token spend per day
+
+  // Whether this action ends with a human taking over, declared by the skill rather than
+  // listed here. It decides two things below: whether to re-offer the 转人工 menu, and
+  // whether to move the session to the human queue.
+  const handsOff = tenant.actions.find((a) => a.name === action)?.handoff ?? false;
 
   // Send the reply BEFORE the state transfer: once the session moves to the
   // human queue the bot may no longer be allowed to message the customer.
@@ -339,46 +346,25 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
   console.log(`[reply:${action}] ${externalUserId}: ${reply.slice(0, 80)}`);
 
   // Re-offer a human after a normal answer, so "转人工客服" is always one tap
-  // away if the bot's reply didn't satisfy. Skipped for handoff/bug/account —
-  // a human is already coming, so the menu would just be noise. Best-effort:
-  // the answer is already sent, so a failed menu send must not throw here.
-  if (action === 'answer') {
+  // away if the bot's reply didn't satisfy. Skipped when a human is already
+  // coming, since the menu would just be noise. Best-effort: the answer is
+  // already sent, so a failed menu send must not throw here.
+  if (!handsOff) {
     try {
       await wecom.sendMenu(openKfId, externalUserId, {
-        headContent: HUMAN_MENU_HEAD,
-        list: [{ type: 'click', click: { id: HUMAN_HANDOFF_ID, content: HUMAN_MENU_ITEM } }],
+        headContent: COPY.menuHead,
+        list: [{ type: 'click', click: { id: HUMAN_HANDOFF_ID, content: COPY.menuItem } }],
       });
     } catch (err) {
       console.error(`human menu send failed for ${externalUserId}:`, err.message);
     }
   }
 
-  if (action === 'bug') {
-    const bug = store.addBug({
-      userId: externalUserId,
-      message: userText,
-      summary: bugSummary || userText.slice(0, 100),
-    });
-    console.log(`[bug #${bug.id}] ${bug.summary}`);
-  }
-  if (action === 'handoff') {
-    // Coverage-gap log: the bot couldn't answer from the FAQ (or the API
-    // failed). Note this also captures by-design handoffs (商务合作 / 充值优惠 /
-    // 情绪激动); keeping the reply lets staff tell real gaps from those.
-    const entry = store.addUnanswered({
-      userId: externalUserId,
-      message: userText,
-      reply,
-      reason: handoffReason,
-    });
-    console.log(`[unanswered #${entry.id}] (${handoffReason}) ${userText.slice(0, 80)}`);
-  }
-  if (action === 'account') {
-    // Human staff distribute the account; when their message appears in the
-    // sync stream (origin 5) the bot follows up with the credits tip.
-    store.setPendingTip(externalUserId);
-  }
-  if (action === 'bug' || action === 'handoff' || action === 'account') {
+  // Whatever this action records (bug report, coverage gap, pending credits tip) is the
+  // skill's business, not the channel's — see actions.ts.
+  runAction(action, { store, userId: externalUserId, userText, result });
+
+  if (handsOff) {
     await transferToHuman(openKfId, externalUserId);
   }
 }
