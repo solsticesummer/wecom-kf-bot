@@ -52,16 +52,38 @@ knowledge namespaces
 ```
 
 ## Use as an MCP server
+
 ```bash
 knowledge-mcp          # stdio; point an MCP client (e.g. Claude Code) at this
+knowledge-mcp --http   # streamable HTTP, for hosted/remote consumers
 ```
+
+**The two transports have different threat models.** Over stdio the client is a local
+process you started, so `kb_ingest` naming any path is the feature. Over HTTP the caller is
+remote, and `kb_ingest` — which reads a server-side path and makes it searchable — becomes a
+file-read primitive: ingest `~/.ssh` into a namespace, then `kb_search` it back. So HTTP mode
+**refuses to start** without both:
+
+```bash
+export KNOWLEDGE_HTTP_TOKEN=$(openssl rand -hex 32)   # bearer token, required
+export KNOWLEDGE_INGEST_ROOT=/srv/corpora             # ingest confined here, required
+knowledge-mcp --http                                  # binds 127.0.0.1:8765/mcp
+```
+
+`KNOWLEDGE_INGEST_ROOT` also applies to stdio when set; unset + stdio is unrestricted.
+Paths must be absolute and must exist — a relative path would resolve against the *server's*
+cwd, and a missing one would otherwise ingest 0 chunks and look like success.
+
+Binding anything other than loopback warns: the bearer token travels in plaintext, so
+terminate TLS in front of it.
 
 ## Tests
 No DB, no network, no API key — each file is runnable on its own:
 ```bash
-python tests/test_chunk.py        # chunking
-python tests/test_rerank.py       # rerank ordering + every degradation path
-python tests/test_connectors.py   # format dispatch + graceful skips
+python tests/test_chunk.py         # chunking
+python tests/test_rerank.py        # rerank ordering + every degradation path
+python tests/test_connectors.py    # format dispatch + graceful skips
+python tests/test_server_paths.py  # ingest path confinement (traversal, symlink, prefix)
 ```
 They bootstrap `sys.path` to the source tree rather than relying on the editable
 install, whose strict `.pth` finder doesn't auto-load on every machine.

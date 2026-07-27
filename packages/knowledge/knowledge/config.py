@@ -35,3 +35,18 @@ RERANK_MODEL = os.environ.get("RERANK_MODEL", "qwen3-rerank")
 
 def api_key() -> str | None:
     return os.environ.get("MODELSTUDIO_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")
+
+
+# --- HTTP transport (hosted consumers) ---------------------------------------------------
+# Defaults are deliberately closed: loopback only, and no token means the HTTP server
+# refuses to start. Binding 0.0.0.0 with no auth would expose kb_ingest — which reads an
+# arbitrary server path and makes it searchable — to anyone who can reach the port.
+HTTP_HOST = os.environ.get("KNOWLEDGE_HTTP_HOST", "127.0.0.1")
+HTTP_PORT = int(os.environ.get("KNOWLEDGE_HTTP_PORT", "8765"))
+HTTP_TOKEN = os.environ.get("KNOWLEDGE_HTTP_TOKEN")
+
+# When set, kb_ingest may only read paths inside this directory. REQUIRED for HTTP mode:
+# over stdio the caller is a local process indexing its own files, but a remote caller able
+# to name any path could ingest ~/.ssh or /etc into a namespace and read it back via
+# kb_search. Unset + stdio = unrestricted, which is the local dev-tool behaviour.
+INGEST_ROOT = os.environ.get("KNOWLEDGE_INGEST_ROOT")
