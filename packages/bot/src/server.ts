@@ -14,6 +14,8 @@ import { RateLimiter } from './ratelimit.js';
 import { generateReply } from './ai.js';
 import { loadRegistry, type Tenant } from './tenants.js';
 import { runAction } from './actions.js';
+import { checkQuota } from './quota.js';
+import { canReadTenant, isOperator, presentedToken } from './adminauth.js';
 import path from 'node:path';
 
 // Fail-fast on a missing required env var, and narrow `string | undefined` to
@@ -33,7 +35,6 @@ const WECOM_TOKEN = requireEnv('WECOM_TOKEN');
 const WECOM_AES_KEY = requireEnv('WECOM_AES_KEY');
 requireEnv('DASHSCOPE_API_KEY'); // read later by ai.ts; validated here so we fail at boot
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const DATA_DIR = process.env.DATA_DIR || './data';
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -106,65 +107,69 @@ app.use(express.text({ type: '*/*' }));
 
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
-// Staff-facing admin surface. Every route is gated on ADMIN_TOKEN being configured AND
-// supplied — bugs and coverage gaps contain verbatim customer messages, so this must never
-// be public.
-//
-// The token stays an env var rather than moving into the tenant file, which is a deliberate
-// departure from the original multi-tenant sketch: tenants/*.yaml is committed to git, and
-// per-tenant tokens there would put credentials in the repo. Real per-tenant auth is a
-// productization concern (tenants in Postgres, proper authn) — until then one operator token
-// guarding a tenant-scoped path is the honest version.
-function authed(req: Request, res: Response): boolean {
-  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
-    res.status(403).json({ error: 'forbidden' });
-    return false;
-  }
-  return true;
-}
+// Staff-facing admin surface. /bugs and /unanswered contain verbatim customer messages, so
+// every route is gated — and gated PER TENANT: see adminauth.ts for why one shared token was
+// a real boundary hole once a second tenant existed.
 
-// Resolve :tenantId, or 404. Un-prefixed legacy routes fall back to the default tenant so
-// the URLs in SETUP.md keep working on a single-tenant deployment.
-function resolveStore(req: Request, res: Response): StateStore | undefined {
+/** Resolve the tenant for a route, authorize the caller, and hand back its store. */
+function authedStore(req: Request, res: Response): { tenant: Tenant; store: StateStore } | undefined {
   const id = req.params.tenantId;
+  // Un-prefixed legacy routes act on the default tenant, so the URLs in SETUP.md keep
+  // working on a single-tenant deployment.
   const tenant = id ? registry.get(id) : registry.defaultTenant;
   if (!tenant) {
     res.status(404).json({ error: `unknown tenant ${id}` });
     return undefined;
   }
-  return storeFor(tenant);
+  const token = presentedToken(req.headers.authorization, req.query.token);
+  if (!canReadTenant(token, tenant.id)) {
+    // Deliberately the same 403 for "wrong token" and "right token, wrong tenant" — telling
+    // a caller which tenants exist is itself information they haven't authenticated for.
+    res.status(403).json({ error: 'forbidden' });
+    return undefined;
+  }
+  return { tenant, store: storeFor(tenant) };
 }
 
+// Operator-only: naming every tenant is more than any single tenant's operator should see.
 app.get('/tenants', (req: Request, res: Response) => {
-  if (!authed(req, res)) return;
+  if (!isOperator(presentedToken(req.headers.authorization, req.query.token))) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
   res.json(registry.all().map((t) => ({ id: t.id, namespace: t.namespace, kfIds: t.kfIds })));
 });
 
 for (const p of ['/bugs', '/t/:tenantId/bugs']) {
   app.get(p, (req: Request, res: Response) => {
-    if (!authed(req, res)) return;
-    const store = resolveStore(req, res);
-    if (store) res.json(store.getBugs());
+    const ctx = authedStore(req, res);
+    if (ctx) res.json(ctx.store.getBugs());
   });
 }
 
 for (const p of ['/unanswered', '/t/:tenantId/unanswered']) {
   app.get(p, (req: Request, res: Response) => {
-    if (!authed(req, res)) return;
-    const store = resolveStore(req, res);
-    if (!store) return;
+    const ctx = authedStore(req, res);
+    if (!ctx) return;
     // ?reason=not_in_kb narrows to one handoff reason (e.g. the genuine FAQ gaps);
     // no reason param returns everything.
-    const list = store.getUnanswered();
+    const list = ctx.store.getUnanswered();
     res.json(req.query.reason ? list.filter((e) => e.reason === req.query.reason) : list);
   });
 }
 
 for (const p of ['/usage', '/t/:tenantId/usage']) {
   app.get(p, (req: Request, res: Response) => {
-    if (!authed(req, res)) return;
-    const store = resolveStore(req, res);
-    if (store) res.json(store.getUsage());
+    const ctx = authedStore(req, res);
+    if (!ctx) return;
+    // Report the cap alongside the spend, so "why did the bot start handing off?" is
+    // answerable from one endpoint instead of cross-referencing the tenant file.
+    const q = checkQuota(ctx.tenant, ctx.store);
+    res.json({
+      usage: ctx.store.getUsage(),
+      today: { tokens: q.usedTokens, calls: q.usedCalls },
+      limits: ctx.tenant.limits,
+      withinBudget: q.allowed,
+    });
   });
 }
 
@@ -377,6 +382,33 @@ async function handleOneMessage(msg: KfMessage): Promise<void> {
         reply: COPY.handoffReply,
         bugSummary: '',
         handoffReason: 'user_request',
+      },
+    });
+    await transferToHuman(openKfId, externalUserId);
+    return;
+  }
+
+  // Daily budget gate, BEFORE the model call — the whole point is to not spend. Unlike the
+  // rate limit above, an exhausted budget is the operator's problem, not the customer's, so
+  // they are told and handed to a human rather than left on read. Same degradation shape as
+  // an API error: this codebase never answers a customer with silence.
+  const quota = checkQuota(tenant, store);
+  if (!quota.allowed) {
+    systemStore.markSeen(msg.msgid);
+    console.error(
+      `[quota:${tenant.id}] daily ${quota.exceeded} budget spent ` +
+        `(${quota.usedCalls} calls / ${quota.usedTokens} tokens) — handing off to a human`,
+    );
+    await wecom.sendText(openKfId, externalUserId, COPY.quotaExceeded);
+    runAction('handoff', {
+      store,
+      userId: externalUserId,
+      userText,
+      result: {
+        action: 'handoff',
+        reply: COPY.quotaExceeded,
+        bugSummary: '',
+        handoffReason: 'quota_exceeded',
       },
     });
     await transferToHuman(openKfId, externalUserId);

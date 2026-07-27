@@ -50,10 +50,17 @@ Save fails? `pm2 logs`: `URL verification failed` = Token/AESKey mismatch; conne
 
 ## Admin endpoints (ADMIN_TOKEN-gated — contain customer messages)
 
-- `GET /health` → `{"ok":true}`
-- `GET /bugs?token=…` — reported bugs.
-- `GET /unanswered?token=…[&reason=not_in_kb]` — handoffs / FAQ gaps. `reason`: `not_in_kb`, `unclear`, `user_request`, `upset`, `business`, `discount`, `api_error`.
-- `GET /usage?token=…` — per-day token spend.
+Authenticate with `Authorization: Bearer <token>` (or the legacy `?token=`, which lands in
+access and proxy logs). `ADMIN_TOKEN` is operator-wide; `ADMIN_TOKEN_<TENANT>` reads only that
+tenant. Fail-closed: nothing configured means every route 403s.
+
+- `GET /health` → `{"ok":true}` (unauthenticated)
+- `GET /tenants` — configured tenants. **Operator token only.**
+- `GET /t/<tenant>/bugs` — reported bugs.
+- `GET /t/<tenant>/unanswered[?reason=not_in_kb]` — handoffs / FAQ gaps. `reason`: `not_in_kb`, `unclear`, `user_request`, `upset`, `business`, `discount`, `api_error`, `quota_exceeded`.
+- `GET /t/<tenant>/usage` — per-day spend, plus today's totals against the tenant's caps and `withinBudget`.
+
+The un-prefixed `/bugs`, `/unanswered`, `/usage` still work and act on the default tenant.
 
 ## Configuration
 
@@ -89,5 +96,24 @@ stream is. Admin routes are per tenant: `/t/<tenant>/bugs|unanswered|usage`, plu
 
 `tenants/demo.yaml` is a fake second tenant kept purely to hold the boundary honest — it owns
 no kf accounts and can never receive a real message.
+
+### Spend caps
+
+Each tenant may declare a daily budget (UTC days). Omit the block for no cap:
+
+```yaml
+limits:
+  daily_tokens: 2000000
+  daily_calls: 20000
+```
+
+This is a different control from the per-customer rate limit in `.env`: that stops one
+spammer, but a hundred well-behaved customers or a retry loop can still run up the bill
+without any single customer tripping it.
+
+Over budget, the customer gets `copy.quota_exceeded` and is transferred to a human — never
+left on read, matching how every other failure in this codebase degrades. The cap is checked
+*before* the model call, so it means "already over" rather than "would go over": the last
+message before it trips is still paid for, bounded by the tenant's `max_tokens`.
 
 Runtime state (cursor, dedupe, history, bugs) lives in `packages/bot/data/` — keep it on persistent disk.

@@ -44,6 +44,15 @@ namespace: dramaclaw
 # this product's prices into another tenant's prompt the moment the DB blipped.
 fallback_faq: faq.md
 
+# Daily spend cap (UTC days), so one tenant can't burn the whole DashScope quota. The
+# per-customer rate limit in .env is a different control: it stops ONE spammer, but a hundred
+# well-behaved customers or a retry loop can still run up the bill without tripping it.
+# Omit the block (or set 0) for no cap. Over budget = the customer is told and handed to a
+# human, never left on read.
+limits:
+  daily_tokens: 2000000
+  daily_calls: 20000
+
 model:
   name: qwen3.7-plus
   # Higher = more varied wording (less FAQ-parroting), lower = more repetitive. Grounding is
@@ -73,3 +82,8 @@ copy:
   # Used when the model call itself fails — the customer is handed to a human rather than
   # left on read.
   api_error_reply: 抱歉，我暂时无法处理您的问题，正在为您转接人工客服，请稍候。
+
+  # Sent when this tenant's daily budget is spent. Deliberately says nothing about quotas or
+  # billing — that is the operator's problem, and the customer only needs to know a human is
+  # coming.
+  quota_exceeded: 抱歉，智能客服暂时不可用，正在为您转接人工客服，请稍候。

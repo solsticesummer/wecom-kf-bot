@@ -56,7 +56,7 @@ Customer-facing copy (welcome, the 转人工 menu, credits tip, rate-limit notic
 
 - FAQ question from a non-admin WeChat → reply (`[reply:answer]`).
 - Tap the 转人工客服 menu → lands in 待接入池 (`[handoff:button]`); needs a 接待人员.
-- `curl "…/unanswered?token=ADMIN_TOKEN"` and `…/usage?token=…`.
+- `curl -H "authorization: Bearer $ADMIN_TOKEN" …/t/<tenant>/unanswered` and `…/t/<tenant>/usage`.
 
 ## Troubleshooting
 

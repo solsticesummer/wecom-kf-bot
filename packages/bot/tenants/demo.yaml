@@ -34,6 +34,11 @@ namespace: demo
 
 fallback_faq: demo/faq.md
 
+# Deliberately different from dramaclaw's so the cap is visibly per-tenant, not global.
+limits:
+  daily_tokens: 50000
+  daily_calls: 500
+
 model:
   name: qwen3.7-plus
   temperature: 0.6
@@ -47,3 +52,4 @@ copy:
   credits_tip: 感谢您的试用，欢迎向我们提意见～
   rate_limit: 您发送得太频繁啦，请稍等一下再发送哦～
   api_error_reply: 抱歉，我暂时无法处理您的问题，正在为您转接人工客服，请稍候。
+  quota_exceeded: 抱歉，智能客服暂时不可用，正在为您转接人工客服，请稍候。

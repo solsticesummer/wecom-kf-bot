@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { loadSkill, composeSystemRules, enabledActions, type Skill, type SkillAction } from './skills.js';
+import type { TenantLimits } from './quota.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TENANTS_DIR = path.join(__dirname, '..', 'tenants');
@@ -39,6 +40,8 @@ export interface Tenant {
    */
   fallbackFaq: string;
   model: { name: string; temperature: number; maxTokens: number };
+  /** Daily spend caps. Empty object = uncapped (see quota.ts). */
+  limits: TenantLimits;
   copy: TenantCopy;
   /** WeCom kf accounts (open_kfid) whose conversations this tenant serves. */
   kfIds: string[];
@@ -53,6 +56,8 @@ export interface TenantCopy {
   creditsTip: string;
   rateLimit: string;
   apiErrorReply: string;
+  /** Sent when the tenant's daily budget is spent — see quota.ts. */
+  quotaExceeded: string;
 }
 
 /**
@@ -85,6 +90,10 @@ export function loadTenant(id: string): Tenant {
       name: cfg.model?.name ?? 'qwen3.7-plus',
       temperature: cfg.model?.temperature ?? 0.6,
       maxTokens: cfg.model?.max_tokens ?? 512,
+    },
+    limits: {
+      dailyTokens: Number(cfg.limits?.daily_tokens ?? 0) || undefined,
+      dailyCalls: Number(cfg.limits?.daily_calls ?? 0) || undefined,
     },
     copy: loadCopy(id, cfg.copy ?? {}),
     kfIds: (cfg.wecom?.kf_ids ?? []).map(String).filter(Boolean),
@@ -119,6 +128,7 @@ const COPY_KEYS: [keyof TenantCopy, string][] = [
   ['creditsTip', 'credits_tip'],
   ['rateLimit', 'rate_limit'],
   ['apiErrorReply', 'api_error_reply'],
+  ['quotaExceeded', 'quota_exceeded'],
 ];
 
 /**
