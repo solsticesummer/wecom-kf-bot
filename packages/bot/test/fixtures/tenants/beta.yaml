@@ -1,0 +1,41 @@
+# Second pipeline-test tenant, on a different kf account. Differs from alpha in product name,
+# namespace, fallback corpus, copy and action set (no `account`) so cross-tenant leakage in
+# any of those shows up as a failed assertion rather than passing unnoticed.
+id: beta
+
+wecom:
+  kf_ids:
+    - kf_beta
+
+skills:
+  - cs-triage
+
+config:
+  productName: BetaProduct
+  domainTerms: 贝塔、测试
+
+namespace: beta-test
+
+fallback_faq: test-beta.md
+
+# Generous: beta is used by the multi-tenancy tests, which must not be affected by how many
+# messages ran before them. The quota branch has its own tenant (gamma) precisely so that
+# test doesn't depend on test ordering.
+limits:
+  daily_tokens: 100000
+  daily_calls: 1000
+
+model:
+  name: test-model
+  temperature: 0.6
+  max_tokens: 512
+
+copy:
+  welcome: 欢迎来到 BetaProduct
+  menu_head: 需要人工协助吗？
+  menu_item: 转接人工
+  handoff_reply: 好的，正在为您转接人工客服。
+  credits_tip: BetaProduct 积分提示
+  rate_limit: 您发送得太频繁啦
+  api_error_reply: BetaProduct 暂时无法处理，正在转接人工。
+  quota_exceeded: BetaProduct 智能客服暂时不可用，正在转接人工。

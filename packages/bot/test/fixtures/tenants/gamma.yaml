@@ -1,0 +1,40 @@
+# Exists solely to exercise the spend cap. It owns its own kf account and nothing else
+# touches it, so "how many calls has this tenant made today" is a function of the quota test
+# alone rather than of how many tests ran before it — the coupling that made the first
+# version of that test order-dependent.
+#
+# daily_calls: 1 means the second message is always the capped one.
+id: gamma
+
+wecom:
+  kf_ids:
+    - kf_gamma
+
+skills:
+  - cs-triage
+
+config:
+  productName: GammaProduct
+  domainTerms: 伽马、测试
+
+namespace: gamma-test
+
+fallback_faq: test-beta.md
+
+limits:
+  daily_calls: 1
+
+model:
+  name: test-model
+  temperature: 0.6
+  max_tokens: 512
+
+copy:
+  welcome: 欢迎来到 GammaProduct
+  menu_head: 需要人工协助吗？
+  menu_item: 转接人工
+  handoff_reply: 好的，正在为您转接人工客服。
+  credits_tip: GammaProduct 积分提示
+  rate_limit: 您发送得太频繁啦
+  api_error_reply: GammaProduct 暂时无法处理，正在转接人工。
+  quota_exceeded: GammaProduct 智能客服暂时不可用，正在转接人工。

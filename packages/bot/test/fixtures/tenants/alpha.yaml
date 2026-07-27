@@ -1,0 +1,40 @@
+# Pipeline-test tenant. Unlike the shipped tenants this one OWNS a kf account, which is what
+# makes routing observable. Kept out of tenants/ so the real registry stays fail-closed.
+id: alpha
+
+wecom:
+  kf_ids:
+    - kf_alpha
+
+skills:
+  - cs-triage
+
+config:
+  productName: AlphaProduct
+  domainTerms: 阿尔法、测试
+
+optional_actions:
+  - account
+
+namespace: alpha-test
+
+fallback_faq: test-alpha.md
+
+limits:
+  daily_tokens: 100000
+  daily_calls: 1000
+
+model:
+  name: test-model
+  temperature: 0.6
+  max_tokens: 512
+
+copy:
+  welcome: 欢迎来到 AlphaProduct
+  menu_head: 没有解决您的问题？
+  menu_item: 转人工客服
+  handoff_reply: 好的，正在为您转接人工客服。
+  credits_tip: AlphaProduct 积分提示
+  rate_limit: 您发送得太频繁啦
+  api_error_reply: AlphaProduct 暂时无法处理，正在转接人工。
+  quota_exceeded: AlphaProduct 智能客服暂时不可用，正在转接人工。

@@ -6,7 +6,10 @@
 // 2. Message content is PULLED, not pushed: the callback only delivers a
 //    sync token; syncMessages() exchanges (token, cursor) for actual messages.
 
-const BASE = 'https://qyapi.weixin.qq.com/cgi-bin';
+// Overridable so the pipeline tests can point the client at a local fake and assert on what
+// the bot actually tried to SEND — the outbound half is otherwise untestable without a real
+// WeCom tenancy. Same pattern as QWEN_API_URL / EMBEDDING_API_URL. Never set in production.
+const BASE = process.env.WECOM_API_BASE || 'https://qyapi.weixin.qq.com/cgi-bin';
 
 // The raw WeCom API envelope — every response carries errcode/errmsg plus
 // endpoint-specific fields we read positionally.

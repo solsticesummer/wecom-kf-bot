@@ -116,4 +116,25 @@ left on read, matching how every other failure in this codebase degrades. The ca
 *before* the model call, so it means "already over" rather than "would go over": the last
 message before it trips is still paid for, bounded by the tenant's `max_tokens`.
 
-Runtime state (cursor, dedupe, history, bugs) lives in `packages/bot/data/` — keep it on persistent disk.
+Runtime state lives in `packages/bot/data/` — keep it on persistent disk. The sync cursor and
+msgid dedupe sit at the root (they're corp-wide, since the sync stream is); per-tenant history,
+bugs, coverage gaps, usage and pending tips sit under `data/tenants/<id>/`.
+
+## Tests
+
+```bash
+npm test
+```
+
+Hermetic — no network, no database, no API key. Alongside the unit tests,
+`test/pipeline.test.ts` runs the **whole message pipeline** end to end: it spawns a real
+server, forges genuinely signed and AES-encrypted WeCom callbacks with `WecomCrypto` (so the
+crypto and signature checks are under test, not mocked), and points the bot at a fake WeCom +
+fake Qwen so assertions can be made on what it actually tried to send.
+
+`DATABASE_URL` is deliberately unset there, so every scenario also exercises the
+retrieval-outage fallback. The suite covers the invariants that are otherwise only claimed in
+comments: an unregistered kf account is ignored, the bot stays silent when a human owns the
+session, a spent budget still replies and hands off, a model failure never leaves a customer
+on read, duplicate `msgid`s reply once, and one tenant's knowledge/history never reaches
+another's.

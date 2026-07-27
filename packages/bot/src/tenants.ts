@@ -18,7 +18,10 @@ import { loadSkill, composeSystemRules, enabledActions, type Skill, type SkillAc
 import type { TenantLimits } from './quota.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TENANTS_DIR = path.join(__dirname, '..', 'tenants');
+// Overridable so the pipeline tests can supply fixture tenants that own kf accounts. The
+// shipped tenants deliberately own none, and adding a fake kf id to demo.yaml purely to make
+// it testable would give away the property that makes it safe. Never set in production.
+const TENANTS_DIR = process.env.TENANTS_DIR || path.join(__dirname, '..', 'tenants');
 
 export interface Tenant {
   id: string;
